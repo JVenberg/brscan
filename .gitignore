@@ -1,0 +1,13 @@
+# Scanned documents (may contain personal data) -- never commit these.
+scan-*.pdf
+scan-*.jpg
+scan-*.jpeg
+scan-*.png
+*.pdf
+*.jpg
+*.jpeg
+*.png
+
+# macOS / editor cruft
+.DS_Store
+*.swp
