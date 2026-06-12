@@ -8,6 +8,17 @@ scan-*.png
 *.jpeg
 *.png
 
+# Python / packaging
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.eggs/
+uv.lock
+
 # macOS / editor cruft
 .DS_Store
 *.swp

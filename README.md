@@ -3,7 +3,7 @@
 Trigger a scan on a **Brother DSmobile** portable scanner (DS-640 / DS-740D /
 DS-940DW family) straight from the command line over **eSCL / Apple AirScan**,
 and get the file back as a PDF or JPEG. No Brother drivers, no GUI, no cloud:
-just `bash` + `curl`.
+just a single Python CLI you install with [uv](https://github.com/astral-sh/uv).
 
 ```console
 $ brscan contract.pdf
@@ -18,26 +18,39 @@ brscan: saved /path/to/contract.pdf  (1 page(s))
 
 The Brother DSmobile scanners expose a perfectly good network scan API (the
 same eSCL/AirScan protocol macOS and iOS use), but the desktop software is
-heavy and there's no official CLI. This is a ~250-line script that drives the
+heavy and there's no official CLI. This is a small Python CLI that drives the
 API directly, with the rough edges of these particular units smoothed over.
 
 ## Requirements
 
-- `bash` and `curl` (preinstalled on macOS and most Linux).
-- **mDNS discovery:** `dns-sd` (built into macOS) or `avahi-browse` (Linux:
-  `sudo apt install avahi-utils`). Optional if you pass `-H <ip>`.
-- **PDF output (optional):** one of [`img2pdf`](https://github.com/myollie/img2pdf)
-  (best: embeds the JPEG losslessly, preserves DPI), `uvx img2pdf` (via
-  [uv](https://github.com/astral-sh/uv)), or ImageMagick. Without any of these,
-  brscan falls back to saving JPEG pages.
-- **Auto-crop (optional):** ImageMagick (`magick`). Without it, scans are saved
-  uncropped.
+- **[uv](https://github.com/astral-sh/uv)** (it provides Python and isolates the
+  install). That's the only thing you need on the system.
+
+Everything else is a Python dependency that uv installs into an isolated
+environment: [`zeroconf`](https://github.com/python-zeroconf/python-zeroconf)
+for mDNS discovery, `requests` for the HTTP flow, and
+[`img2pdf`](https://github.com/myollie/img2pdf) + [`Pillow`](https://python-pillow.org/)
+for PDF assembly and auto-crop. No `dns-sd`/`avahi`, no `curl`, no ImageMagick:
+the dependency wheels bundle their own native codecs.
 
 ## Install
 
 ```sh
-git clone https://github.com/JVenberg/brscan
-install -m 0755 brscan/brscan /usr/local/bin/brscan   # or anywhere on $PATH
+uv tool install git+https://github.com/JVenberg/brscan
+```
+
+This puts a `brscan` executable on your PATH (`~/.local/bin`) in its own isolated
+environment. To update or remove it:
+
+```sh
+uv tool upgrade brscan
+uv tool uninstall brscan
+```
+
+Or run it without installing:
+
+```sh
+uvx --from git+https://github.com/JVenberg/brscan brscan --status
 ```
 
 ## Usage
@@ -64,6 +77,7 @@ brscan --forget            clear the cached scanner
 | `-H, --host HOST` | scanner IP or mDNS name | cache, then discovery |
 | `-P, --port N` | eSCL port | discovered, else 8080 |
 | `-w, --wait SECS` | how long to wait for a sleeping scanner | 25 |
+| `--retries N` | network retry attempts per request (with backoff) | 3 |
 | `-v, --verbose` | print request XML and HTTP details | |
 
 ### Examples
@@ -107,10 +121,11 @@ with no sheet loaded, brscan says so and re-prompts rather than giving up.
 
 Resolution order: **`-H`/`BRSCAN_HOST` → cached host → mDNS discovery**.
 
-The discovered `.local` name (which encodes the scanner's MAC and therefore
-survives DHCP lease changes) is cached at `~/.cache/brscan/scanner`. Later runs
-use it instantly; if the cached host stops answering, brscan automatically
-re-discovers and updates the cache.
+Discovery uses `zeroconf` (pure Python, so no `dns-sd`/`avahi` needed). The
+discovered `.local` name (which encodes the scanner's MAC and therefore survives
+DHCP lease changes) is cached at `~/.cache/brscan/scanner`. Later runs use it
+instantly; if the cached host stops answering, brscan automatically re-discovers
+and updates the cache.
 
 ## The reverse-engineered protocol (eSCL / AirScan)
 
@@ -136,7 +151,10 @@ only guards the EWS configuration UI.)
 - **They sleep aggressively and drop Wi-Fi.** A scanner that sleeps mid-transfer
   truncates the JPEG (no trailing `FFD9`, gray tail). brscan wakes/polls first,
   sends an explicit `ScanRegion` with `MustHonor=true` so the JPEG length is
-  fixed, and verifies each page is a complete JPEG (retrying once if not).
+  fixed, and verifies each page is a complete JPEG. Transient network errors and
+  truncated pages are retried with exponential backoff (`--retries`, default 3);
+  if the scanner vanishes mid-job it is woken and the job is retried, and a drop
+  is never mistaken for "end of document".
 - **It's sheet-fed.** Load one page at a time, top-edge first and centered. A
   flashing exclamation LED usually means a paper jam or unlatched cover.
 
