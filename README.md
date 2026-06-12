@@ -57,6 +57,7 @@ brscan --forget            clear the cached scanner
 | `-c, --color MODE` | `color` / `gray` / `bw` / `auto` | color |
 | `-f, --format FMT` | `pdf` / `jpeg` | pdf |
 | `-d, --duplex` | scan both sides (duplex ADF) | off |
+| `-i, --interactive` | multi-page: scan a sheet, Enter for the next, Esc/q to finish | off |
 | `-s, --size SIZE` | `letter` / `a4` / `legal` / `max` / `auto` | letter |
 | `--width N` / `--height N` | custom region, in 1/300 inch units | |
 | `--no-crop` | keep blank/gray padding | crop on |
@@ -70,6 +71,8 @@ brscan --forget            clear the cached scanner
 ```sh
 brscan                          # 300dpi color Letter PDF -> scan-<ts>.pdf
 brscan -d -r 600 contract.pdf   # duplex, 600 dpi
+brscan -i report.pdf            # multi-page: Enter scans each sheet, Esc finishes
+brscan -i -d report.pdf         # multi-page duplex (2 pages per sheet)
 brscan -c gray -f jpeg page.jpg # grayscale JPEG (one file per page)
 brscan -s a4 --no-crop          # full A4 area, no trimming
 brscan --discover               # locate + cache the scanner
@@ -78,6 +81,27 @@ brscan -H 192.168.1.50 --status # talk to a specific host
 
 Every flag also has a `BRSCAN_*` environment variable (`BRSCAN_RES`,
 `BRSCAN_COLOR`, `BRSCAN_HOST`, ...). See `brscan --help`.
+
+## Multi-page documents
+
+These are single-sheet feeders, so a multi-page document means feeding one sheet
+at a time. `-i`/`--interactive` makes that one command:
+
+```console
+$ brscan -i report.pdf
+brscan: interactive multi-page mode: load a sheet and press Enter to scan it; Esc or q to finish.
+brscan: 0 page(s) captured. Press Enter to scan the next sheet, Esc or q to finish:
+brscan: received page 1 (3110402 bytes)
+brscan: 1 page(s) captured. Press Enter to scan the next sheet, Esc or q to finish:
+brscan: received page 2 (2980173 bytes)
+brscan: 2 page(s) captured. Press Enter to scan the next sheet, Esc or q to finish:
+brscan: saved report.pdf  (2 page(s))
+```
+
+Each Enter scans whatever is in the feeder and appends it; **Esc** (or `q`)
+finishes and assembles every page into the one output file. Combine with
+`-d`/`--duplex` to add two pages (front and back) per sheet. If you press Enter
+with no sheet loaded, brscan says so and re-prompts rather than giving up.
 
 ## How it finds the scanner
 

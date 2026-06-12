@@ -50,6 +50,7 @@ OUT=""
 CROP=1                            # trim trailing scanner-background padding (1=on)
 WAKE_SECS="${BRSCAN_WAKE_SECS:-25}"      # poll a sleeping scanner up to this long
 DISCOVER_SECS="${BRSCAN_DISCOVER_SECS:-4}"  # mDNS browse/resolve window (dns-sd)
+INTERACTIVE="${BRSCAN_INTERACTIVE:-0}"   # 1 => prompt between sheets, one PDF at the end
 VERBOSE=0
 
 CACHE_DIR="${BRSCAN_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/brscan}"
@@ -72,6 +73,8 @@ OPTIONS
   -c, --color MODE     color | gray | bw | auto               (default color)
   -f, --format FMT     pdf | jpeg                             (default pdf)
   -d, --duplex         scan both sides (if the ADF supports duplex)
+  -i, --interactive    multi-page: scan a sheet, press Enter for the next,
+                       Esc/q to finish; all pages go into one file
   -s, --size SIZE      letter | a4 | legal | max | auto       (default letter)
       --width N        scan width  in 1/300 inch units (custom region)
       --height N       scan height in 1/300 inch units (custom region)
@@ -85,6 +88,8 @@ OPTIONS
 
 NOTES
   * Sheet-fed scanner: load the page(s) in the feeder first.
+  * -i/--interactive scans one sheet per Enter and combines every page into a
+    single file; press Esc or q to stop. Works with -d/--duplex (2 pages/sheet).
   * Finds the scanner over mDNS (dns-sd on macOS, avahi-browse on Linux) and
     caches the result (~/.cache/brscan/scanner). First run needs the scanner
     powered on and on the same network. --forget clears the cache.
@@ -102,8 +107,8 @@ EXAMPLES
   brscan -H 192.168.1.50 --status     # talk to a specific host
 
 ENV  BRSCAN_HOST BRSCAN_PORT BRSCAN_RES BRSCAN_COLOR BRSCAN_DUPLEX
-     BRSCAN_FORMAT BRSCAN_INTENT BRSCAN_SIZE BRSCAN_WAKE_SECS
-     BRSCAN_DISCOVER_SECS BRSCAN_CACHE_DIR
+     BRSCAN_FORMAT BRSCAN_INTENT BRSCAN_SIZE BRSCAN_INTERACTIVE
+     BRSCAN_WAKE_SECS BRSCAN_DISCOVER_SECS BRSCAN_CACHE_DIR
 EOF
 }
 
@@ -120,6 +125,7 @@ while [ $# -gt 0 ]; do
     -c|--color)   COLOR="$2"; shift 2 ;;
     -f|--format)  FORMAT="$2"; shift 2 ;;
     -d|--duplex)  DUPLEX=true; shift ;;
+    -i|--interactive) INTERACTIVE=1; shift ;;
     -s|--size)    SIZE="$2"; shift 2 ;;
     --width)      WIDTH="$2"; shift 2 ;;
     --height)     HEIGHT="$2"; shift 2 ;;
@@ -319,37 +325,11 @@ EOF
 
 log "request body:"; [ "$VERBOSE" -eq 1 ] && echo "$BODY" >&2
 
-HDR="$(mktemp -t brscan-hdr.XXXXXX)"
 PAGEDIR="$(mktemp -d -t brscan-pages.XXXXXX)"
-trap 'rm -rf "$HDR" "$PAGEDIR"' EXIT
-
-# ---- 0. locate / wake the scanner ------------------------------------------
-locate_scanner "$WAKE_SECS" || die "$NO_SCANNER_MSG"
-
-# ---- 1. create the scan job -------------------------------------------------
-note "scanning on ${HOST}:${PORT}  (${COLOR##*:} ${RES}dpi $([ "$DUPLEX" = true ] && echo duplex || echo simplex), ${SIZE} -> ${FORMAT})"
-HTTP_CODE="$(curl -sS -m 60 -o /dev/null -D "$HDR" -w '%{http_code}' \
-  -X POST "$BASE/ScanJobs" -H "Content-Type: text/xml" --data-binary "$BODY")" \
-  || die "could not reach scanner at ${HOST}:${PORT}"
-log "POST /eSCL/ScanJobs -> $HTTP_CODE"; [ "$VERBOSE" -eq 1 ] && cat "$HDR" >&2
-
-if [ "$HTTP_CODE" != "201" ]; then
-  case "$HTTP_CODE" in
-    409) die "scanner busy or no paper in the feeder (HTTP 409). Load a page and retry." ;;
-    503) die "scanner unavailable / in use by another client (HTTP 503)." ;;
-    404) die "ScanJobs not found on ${HOST}:${PORT}. Wrong eSCL port? (try -P 8080)" ;;
-    *)   echo "----- response -----" >&2; cat "$HDR" >&2; die "ScanJobs creation failed (HTTP $HTTP_CODE)." ;;
-  esac
-fi
-
-LOCATION="$(grep -i '^location:' "$HDR" | tr -d '\r' | tail -1 | sed 's/^[Ll]ocation:[[:space:]]*//')"
-[ -n "$LOCATION" ] || die "no Location header returned; cannot fetch document."
-case "$LOCATION" in
-  http*) JOB="$LOCATION" ;;
-  /*)    JOB="http://${HOST}:${PORT}${LOCATION}" ;;
-  *)     JOB="http://${HOST}:${PORT}/${LOCATION}" ;;
-esac
-log "job: $JOB"
+trap 'rm -rf "$PAGEDIR"' EXIT
+PAGE_COUNT=0          # pages captured so far (persists across jobs in -i mode)
+JOB=""                # URI of the current scan job
+LAST_MSG=""           # reason for the most recent scan_one_job failure
 
 # A complete JPEG ends with the EOI marker FFD9. A truncated transfer (sleeping
 # scanner) won't, so we can detect and retry.
@@ -367,34 +347,106 @@ fetch_page() {  # fetch_page <dest>  -> 0 ok / 1 no-more / 2 incomplete
   rm -f "$dest"; return 1
 }
 
-# ---- 2. pull pages ----------------------------------------------------------
-page=0
-while :; do
-  page=$((page + 1))
-  pf="$(printf '%s/page-%03d.jpg' "$PAGEDIR" "$page")"
-  if fetch_page "$pf"; then
-    note "received page $page ($(wc -c <"$pf" | tr -d ' ') bytes)"
-  else
-    rc=$?
-    if [ "$rc" = "2" ]; then
-      note "page $page came back truncated (scanner likely slept mid-transfer); retrying once..."
-      if fetch_page "$pf"; then
-        note "received page $page on retry ($(wc -c <"$pf" | tr -d ' ') bytes)"
-      else
-        note "WARNING: page $page still incomplete; keeping the partial image."
-        [ -f "$pf" ] || page=$((page - 1))
-      fi
-    else
-      page=$((page - 1)); break
-    fi
+# Create one scan job and append every page it returns to PAGEDIR, continuing
+# the global page numbering. One POST scans whatever is in the feeder: a sheet
+# is 1 page simplex, 2 pages duplex.
+#   0 = added >=1 page   2 = recoverable (no sheet / busy / empty)   1 = hard error
+scan_one_job() {
+  local hdr code location added=0 n pf rc
+  hdr="$(mktemp -t brscan-hdr.XXXXXX)"
+  code="$(curl -sS -m 60 -o /dev/null -D "$hdr" -w '%{http_code}' \
+    -X POST "$BASE/ScanJobs" -H "Content-Type: text/xml" --data-binary "$BODY")" \
+    || { rm -f "$hdr"; LAST_MSG="could not reach scanner at ${HOST}:${PORT}"; return 1; }
+  log "POST /eSCL/ScanJobs -> $code"; [ "$VERBOSE" -eq 1 ] && cat "$hdr" >&2
+  if [ "$code" != "201" ]; then
+    case "$code" in
+      409) LAST_MSG="no sheet in the feeder (HTTP 409)"; rm -f "$hdr"; return 2 ;;
+      503) LAST_MSG="scanner busy / in use by another client (HTTP 503)"; rm -f "$hdr"; return 2 ;;
+      404) LAST_MSG="ScanJobs not found on ${HOST}:${PORT}. Wrong eSCL port? (try -P 8080)"; rm -f "$hdr"; return 1 ;;
+      *)   [ "$VERBOSE" -eq 1 ] && { echo "----- response -----" >&2; cat "$hdr" >&2; }
+           LAST_MSG="ScanJobs creation failed (HTTP $code)"; rm -f "$hdr"; return 1 ;;
+    esac
   fi
-  # safety stop
-  [ "$page" -ge 200 ] && break
-done
+  location="$(grep -i '^location:' "$hdr" | tr -d '\r' | tail -1 | sed 's/^[Ll]ocation:[[:space:]]*//')"
+  rm -f "$hdr"
+  [ -n "$location" ] || { LAST_MSG="no Location header returned; cannot fetch document"; return 1; }
+  case "$location" in
+    http*) JOB="$location" ;;
+    /*)    JOB="http://${HOST}:${PORT}${location}" ;;
+    *)     JOB="http://${HOST}:${PORT}/${location}" ;;
+  esac
+  log "job: $JOB"
+
+  while :; do
+    n=$((PAGE_COUNT + 1))
+    pf="$(printf '%s/page-%03d.jpg' "$PAGEDIR" "$n")"
+    if fetch_page "$pf"; then
+      PAGE_COUNT=$n; added=$((added + 1)); note "received page $PAGE_COUNT ($(wc -c <"$pf" | tr -d ' ') bytes)"
+    else
+      rc=$?
+      if [ "$rc" = "2" ]; then
+        note "page $n came back truncated (scanner likely slept mid-transfer); retrying once..."
+        if fetch_page "$pf"; then
+          PAGE_COUNT=$n; added=$((added + 1)); note "received page $PAGE_COUNT on retry ($(wc -c <"$pf" | tr -d ' ') bytes)"
+        elif [ -f "$pf" ]; then
+          PAGE_COUNT=$n; added=$((added + 1)); note "WARNING: page $PAGE_COUNT still incomplete; keeping the partial image."
+        fi
+      else
+        break
+      fi
+    fi
+    [ "$PAGE_COUNT" -ge 200 ] && break
+  done
+
+  [ "$added" -gt 0 ] || { LAST_MSG="scanner accepted the job but returned no pages (empty feeder?)"; return 2; }
+  return 0
+}
+
+# Interactive prompt between sheets. 0 = scan another, 1 = finish (Esc/q/EOF).
+prompt_continue() {
+  local key
+  while :; do
+    printf 'brscan: %d page(s) captured. Press Enter to scan the next sheet, Esc or q to finish: ' "$PAGE_COUNT" >&2
+    IFS= read -rsn1 key </dev/tty || { printf '\n' >&2; return 1; }
+    case "$key" in
+      '')         printf '\n' >&2; return 0 ;;   # Enter
+      $'\e'|q|Q)  printf '\n' >&2; return 1 ;;   # Esc / q
+      *)          printf '\n' >&2 ;;             # anything else: re-prompt
+    esac
+  done
+}
+
+# ---- locate / wake the scanner, then run the scan(s) ------------------------
+locate_scanner "$WAKE_SECS" || die "$NO_SCANNER_MSG"
+
+if [ "$INTERACTIVE" -eq 1 ] && ! { [ -e /dev/tty ] && [ -r /dev/tty ]; }; then
+  note "interactive mode needs a terminal; falling back to a single batch scan."
+  INTERACTIVE=0
+fi
+
+note "scanning on ${HOST}:${PORT}  (${COLOR##*:} ${RES}dpi $([ "$DUPLEX" = true ] && echo duplex || echo simplex), ${SIZE} -> ${FORMAT})"
+
+if [ "$INTERACTIVE" -eq 1 ]; then
+  note "interactive multi-page mode: load a sheet and press Enter to scan it; Esc or q to finish.$([ "$DUPLEX" = true ] && echo ' (duplex: each sheet adds 2 pages)' || true)"
+  while prompt_continue; do
+    if scan_one_job; then :; else
+      rc=$?
+      [ "$rc" = "2" ] && note "${LAST_MSG}. Load a sheet and press Enter, or Esc to finish." || die "$LAST_MSG"
+    fi
+  done
+else
+  if scan_one_job; then :; else
+    rc=$?
+    [ "$rc" = "2" ] && die "${LAST_MSG}. Load a page and retry." || die "$LAST_MSG"
+  fi
+fi
 
 shopt -s nullglob
 PAGES=( "$PAGEDIR"/page-*.jpg )
-[ "${#PAGES[@]}" -gt 0 ] || die "scanner accepted the job but returned no pages (empty feeder?)."
+if [ "${#PAGES[@]}" -eq 0 ]; then
+  [ "$INTERACTIVE" -eq 1 ] && { note "no pages scanned; nothing saved."; exit 0; }
+  die "no pages scanned."
+fi
 
 # ---- 3. optional crop of trailing scanner-background ------------------------
 crop_page() {  # crop_page <jpg> ; trims uniform blank/gray padding in place
