@@ -1,6 +1,6 @@
 [project]
 name = "brscan"
-version = "0.2.0"
+version = "0.3.0"
 description = "Trigger scans on Brother DSmobile (eSCL / Apple AirScan) scanners from the command line"
 readme = "README.md"
 license = { text = "MIT" }
@@ -21,12 +21,17 @@ dependencies = [
     "pillow>=10",
 ]
 
+[project.optional-dependencies]
+# `scanfile` (AI auto-filing) needs the Anthropic SDK; core brscan does not.
+ai = ["anthropic>=0.40"]
+
 [project.urls]
 Homepage = "https://github.com/JVenberg/brscan"
 Repository = "https://github.com/JVenberg/brscan"
 
 [project.scripts]
 brscan = "brscan.cli:main"
+scanfile = "brscan.scanfile:main"
 
 [build-system]
 requires = ["hatchling"]

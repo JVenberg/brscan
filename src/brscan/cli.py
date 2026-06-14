@@ -105,19 +105,22 @@ def build_parser() -> argparse.ArgumentParser:
 # --------------------------------------------------------------------------- #
 # scanner location: explicit host > cache (quick probe) > mDNS > wake-poll
 # --------------------------------------------------------------------------- #
-def locate(args) -> Optional[Scanner]:
-    explicit = bool(args.host)
+def find_scanner(host: Optional[str] = None, port: Optional[int] = None,
+                 wait: int = 25, retries: int = 3, discover_secs: float = 4.0,
+                 verbose: bool = False) -> Optional[Scanner]:
+    """Resolve a reachable Scanner: explicit host > cache > mDNS > wake-poll."""
+    explicit = bool(host)
     if explicit:
-        cand_host, cand_port = args.host, args.port or discovery.DEFAULT_PORT
+        cand_host, cand_port = host, port or discovery.DEFAULT_PORT
     else:
         cached = discovery.read_cache()
         if cached:
             cand_host, cand_port = cached
         else:
-            cand_host, cand_port = None, args.port or discovery.DEFAULT_PORT
+            cand_host, cand_port = None, port or discovery.DEFAULT_PORT
 
-    def make(host, port):
-        return Scanner(host, port, verbose=args.verbose, retries=args.retries,
+    def make(h, p):
+        return Scanner(h, p, verbose=verbose, retries=retries,
                        note=note, log=lambda m: note(f"[debug] {m}"))
 
     if cand_host:
@@ -127,7 +130,7 @@ def locate(args) -> Optional[Scanner]:
 
     if not explicit:
         note("discovering scanner via mDNS (_uscan._tcp)...")
-        found = discovery.discover(args.discover_secs)
+        found = discovery.discover(discover_secs)
         if found:
             cand_host, cand_port = found
             note(f"found {cand_host}:{cand_port}")
@@ -139,9 +142,15 @@ def locate(args) -> Optional[Scanner]:
     if cand_host:
         note(f"waiting for {cand_host}:{cand_port} to respond (it sleeps to save power)...")
         sc = make(cand_host, cand_port)
-        if sc.wait_until_reachable(args.wait):
+        if sc.wait_until_reachable(wait):
             return sc
     return None
+
+
+def locate(args) -> Optional[Scanner]:
+    return find_scanner(host=args.host, port=args.port, wait=args.wait,
+                        retries=args.retries, discover_secs=args.discover_secs,
+                        verbose=args.verbose)
 
 
 # --------------------------------------------------------------------------- #

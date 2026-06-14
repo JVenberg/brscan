@@ -117,6 +117,62 @@ finishes and assembles every page into the one output file. Combine with
 `-d`/`--duplex` to add two pages (front and back) per sheet. If you press Enter
 with no sheet loaded, brscan says so and re-prompts rather than giving up.
 
+## `scanfile`: scan, classify, and auto-file with Claude
+
+`scanfile` is an optional companion that scans a document, sends the page
+image(s) to **Claude** to figure out what it is, and drops the resulting PDF into
+the right folder under your iCloud Documents (or any base directory) with a
+descriptive name. It is fully automatic: scan a receipt and it lands in
+`RECEIPTS/Safeway grocery receipt $71.29 2026-06-12.pdf` without you typing a
+name or picking a folder.
+
+It learns your filing scheme from the folders you already have: it lists the
+existing subdirectories of the base directory and tells Claude to reuse one when
+it fits, only proposing a new folder when none do.
+
+### Install (needs the `ai` extra)
+
+The Anthropic SDK is an optional dependency, so install the `ai` extra:
+
+```sh
+uv tool install --force "brscan[ai] @ git+https://github.com/JVenberg/brscan"
+```
+
+`scanfile` reads your `ANTHROPIC_API_KEY` from the environment:
+
+```sh
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### Usage
+
+```sh
+scanfile                 # scan one sheet, classify, file under iCloud Documents
+scanfile -d              # duplex (front + back) into one PDF, then file
+scanfile --dry-run       # scan + classify, print where it WOULD go, don't move
+scanfile --folder TAXES  # force the folder; Claude still names the file
+scanfile --model claude-haiku-4-5   # use a cheaper model to economize
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `-d, --duplex` | scan both sides | off |
+| `-r, --res` / `-c, --color` / `-s, --size` / `--no-crop` | same as `brscan` | 300 / color / letter / crop on |
+| `--base-dir DIR` | destination root | `~/Library/Mobile Documents/com~apple~CloudDocs/Documents` |
+| `--folder NAME` | force this folder, skip Claude's folder choice | Claude decides |
+| `--model ID` | Claude model (`SCANFILE_MODEL` env) | `claude-opus-4-8` |
+| `--dry-run` | classify but don't move; leave the PDF in `/tmp` | off |
+| `-H` / `-P` / `-w` / `--retries` / `--discover-secs` / `-v` | same as `brscan` | |
+
+The base directory is also settable with `SCANFILE_BASE_DIR`. The default
+`claude-opus-4-8` gives the best classification; set `--model`/`SCANFILE_MODEL`
+to a cheaper model (e.g. `claude-haiku-4-5`) to trade some accuracy for cost.
+
+Page images are downscaled and sent to the Messages API, and Claude returns a
+structured result (document type, folder, vendor, date, amount, summary, and a
+base filename) that drives the destination path. Scans never leave your machine
+except as that one classification request.
+
 ## How it finds the scanner
 
 Resolution order: **`-H`/`BRSCAN_HOST` → cached host → mDNS discovery**.
