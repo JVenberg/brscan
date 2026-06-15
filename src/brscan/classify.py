@@ -65,10 +65,11 @@ def _encode_image(path: Path, max_edge: int = MAX_EDGE):
 
 
 def classify(pages: List[Path], known_folders: List[str],
-             model: str = DEFAULT_MODEL) -> Optional[Filing]:
+             model: str = DEFAULT_MODEL,
+             api_key: Optional[str] = None) -> Optional[Filing]:
     import anthropic
 
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
     folders_line = ", ".join(known_folders) if known_folders else "(none yet)"
     content: list = [{
         "type": "text",

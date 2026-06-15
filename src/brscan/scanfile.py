@@ -4,7 +4,8 @@ Companion to brscan: drives a scan, sends the page image(s) to Claude for
 classification, and moves the resulting PDF into the matching folder under your
 iCloud Documents (or any base directory). Fully automatic by default.
 
-Requires the `ai` extra (the Anthropic SDK) and an ANTHROPIC_API_KEY:
+Requires the `ai` extra (the Anthropic SDK) and an API key in SCANFILE_API_KEY
+(or ANTHROPIC_API_KEY as a fallback):
     uv tool install --force "brscan[ai] @ git+https://github.com/JVenberg/brscan"
 """
 
@@ -117,8 +118,10 @@ def main(argv=None) -> int:
             "or add anthropic to the existing tool:\n"
             "  uv tool install --force --with anthropic git+https://github.com/JVenberg/brscan")
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        die("ANTHROPIC_API_KEY is not set. Export it and retry.")
+    api_key = os.environ.get("SCANFILE_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        die("no API key found. Set SCANFILE_API_KEY (preferred) or "
+            "ANTHROPIC_API_KEY and retry.")
 
     base = base_dir(args)
     color = COLOR_MODES.get(args.color.lower(), args.color)
@@ -152,7 +155,7 @@ def main(argv=None) -> int:
 
         note(f"classifying {len(pages)} page(s) with {args.model}...")
         folders = [args.folder] if args.folder else existing_folders(base)
-        filing = classify_mod.classify(pages, folders, model=args.model)
+        filing = classify_mod.classify(pages, folders, model=args.model, api_key=api_key)
         if filing is None:
             die("Claude could not classify the document (no structured output).")
 

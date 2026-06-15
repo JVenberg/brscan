@@ -138,10 +138,12 @@ The Anthropic SDK is an optional dependency, so install the `ai` extra:
 uv tool install --force "brscan[ai] @ git+https://github.com/JVenberg/brscan"
 ```
 
-`scanfile` reads your `ANTHROPIC_API_KEY` from the environment:
+`scanfile` reads your API key from `SCANFILE_API_KEY` (a dedicated variable so it
+won't collide with an `ANTHROPIC_API_KEY` your other tools rely on; it falls back
+to `ANTHROPIC_API_KEY` if `SCANFILE_API_KEY` is unset):
 
 ```sh
-export ANTHROPIC_API_KEY=sk-ant-...
+export SCANFILE_API_KEY=sk-ant-...
 ```
 
 ### Usage
