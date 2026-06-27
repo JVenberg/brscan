@@ -126,6 +126,12 @@ It is fully automatic: scan a receipt and it lands in
 `Scans/Receipts/Safeway grocery receipt $71.29 2026-06-12.pdf` without you typing
 a name or picking a folder.
 
+It is **interactive multi-page by default**: load a sheet and press Enter to scan
+it, repeat for as many sheets as the document has, then Esc (or `q`) to finish.
+Every sheet is combined into one PDF, classified together, and filed once. Pass
+`--single` for a one-shot single-sheet scan, and combine either mode with `-d` to
+add front+back per sheet.
+
 The managed root (default `~/Library/Mobile Documents/com~apple~CloudDocs/Documents/Scans`)
 keeps filing self-contained: scanfile lists only that root's own subfolders and
 tells Claude to reuse one when it fits, proposing a new one when none do. Because
@@ -151,8 +157,9 @@ export SCANFILE_API_KEY=sk-ant-...
 ### Usage
 
 ```sh
-scanfile                 # scan one sheet, classify, file under the Scans root
-scanfile -d              # duplex (front + back) into one PDF, then file
+scanfile                 # interactive: Enter scans each sheet, Esc/q finishes, then classify + file
+scanfile --single        # one sheet only, no multi-page loop
+scanfile -d              # duplex: each sheet adds front + back
 scanfile --dry-run       # scan + classify, print where it WOULD go, don't move
 scanfile --folder Taxes  # force the folder; Claude still names the file
 scanfile --model claude-haiku-4-5   # use a cheaper model to economize
@@ -160,6 +167,7 @@ scanfile --model claude-haiku-4-5   # use a cheaper model to economize
 
 | Option | Description | Default |
 | --- | --- | --- |
+| `--single` | scan one sheet and file it; skip the multi-page loop | interactive |
 | `-d, --duplex` | scan both sides | off |
 | `-r, --res` / `-c, --color` / `-s, --size` / `--no-crop` | same as `brscan` | 300 / color / letter / crop on |
 | `--base-dir DIR` | Claude-managed destination root | `.../CloudDocs/Documents/Scans` |

@@ -20,8 +20,8 @@ import tempfile
 from pathlib import Path
 from typing import List
 
-from .cli import find_scanner, note, scan_one_job
-from .escl import COLOR_MODES, Fatal, Recoverable, ScanSettings
+from .cli import _have_tty, find_scanner, note, prompt_continue, scan_one_job
+from .escl import COLOR_MODES, Fatal, Recoverable, ScanSettings, Unreachable
 from .output import assemble_pdf, crop
 
 DEFAULT_BASE = "~/Library/Mobile Documents/com~apple~CloudDocs/Documents/Scans"
@@ -100,6 +100,8 @@ def build_parser() -> argparse.ArgumentParser:
                    choices=["letter", "a4", "legal", "max", "auto"])
     p.add_argument("--no-crop", dest="crop", action="store_false", default=True,
                    help="keep blank/gray padding")
+    p.add_argument("--single", action="store_true",
+                   help="scan one sheet and file it; skip the interactive multi-page loop")
     p.add_argument("--base-dir", help=f"destination root (default: {DEFAULT_BASE})")
     p.add_argument("--folder", help="force this destination folder; skip Claude's folder choice")
     p.add_argument("--model", default=os.environ.get("SCANFILE_MODEL", DEFAULT_MODEL),
@@ -141,18 +143,38 @@ def main(argv=None) -> int:
     if scanner is None:
         die("no scanner reachable. Power it on and ensure it's on the same network.")
 
+    interactive = not args.single
+    if interactive and not _have_tty():
+        note("no terminal available for interactive mode; scanning a single sheet.")
+        interactive = False
+
     mode = "duplex" if args.duplex else "simplex"
     note(f"scanning on {scanner.host}:{scanner.port}  "
          f"({color.split(':')[-1]} {args.res}dpi {mode}, {args.size})")
 
     pagedir = Path(tempfile.mkdtemp(prefix="scanfile-"))
+    page_count = 0
     try:
-        try:
-            scan_one_job(scanner, settings, pagedir, 0, args.wait)
-        except Recoverable as exc:
-            die(f"{exc}. Load a page and retry.")
-        except Fatal as exc:
-            die(str(exc))
+        if interactive:
+            note("multi-page mode: load a sheet and press Enter to scan it; "
+                 "Esc or q to finish and file." +
+                 (" (duplex: each sheet adds 2 pages)" if args.duplex else ""))
+            while prompt_continue(page_count):
+                try:
+                    page_count = scan_one_job(scanner, settings, pagedir, page_count, args.wait)
+                except Unreachable as exc:
+                    note(f"{exc}. Wake the scanner, then press Enter to retry or Esc to finish.")
+                except Recoverable as exc:
+                    note(f"{exc}. Load a sheet and press Enter, or Esc to finish.")
+                except Fatal as exc:
+                    die(str(exc))
+        else:
+            try:
+                scan_one_job(scanner, settings, pagedir, 0, args.wait)
+            except Recoverable as exc:
+                die(f"{exc}. Load a page and retry.")
+            except Fatal as exc:
+                die(str(exc))
 
         pages = sorted(pagedir.glob("page-*.jpg"))
         if not pages:
