@@ -127,6 +127,7 @@ class Scanner:
         self._note_fn = note
         self.retries = max(0, retries)
         self.backoff = backoff
+        self.max_delay = 10.0
         self.session = requests.Session()
 
     def _log(self, msg: str) -> None:
@@ -184,7 +185,7 @@ class Scanner:
                 self._notify(f"network error contacting scanner; retrying in {delay:.0f}s "
                              f"({attempt + 1}/{self.retries})...")
                 time.sleep(delay)
-                delay *= 2
+                delay = min(delay * 2, self.max_delay)
                 continue
 
             self._log(f"POST /eSCL/ScanJobs -> {r.status_code}")
@@ -198,7 +199,7 @@ class Scanner:
                 self._notify(f"scanner busy (HTTP 503); retrying in {delay:.0f}s "
                              f"({attempt + 1}/{self.retries})...")
                 time.sleep(delay)
-                delay *= 2
+                delay = min(delay * 2, self.max_delay)
                 continue
             if r.status_code == 404:
                 raise Fatal(
@@ -272,7 +273,7 @@ class Scanner:
                 self._notify(f"page came back truncated; retrying in {delay:.0f}s "
                              f"({attempt + 1}/{self.retries})...")
                 time.sleep(delay)
-                delay *= 2
+                delay = min(delay * 2, self.max_delay)
                 continue
             return "incomplete"
         return "incomplete"

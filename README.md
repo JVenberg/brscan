@@ -77,7 +77,7 @@ brscan --forget            clear the cached scanner
 | `-H, --host HOST` | scanner IP or mDNS name | cache, then discovery |
 | `-P, --port N` | eSCL port | discovered, else 8080 |
 | `-w, --wait SECS` | how long to wait for a sleeping scanner | 25 |
-| `--retries N` | network retry attempts per request (with backoff) | 3 |
+| `--retries N` | network retry attempts per request (with capped backoff) | 5 |
 | `-v, --verbose` | print request XML and HTTP details | |
 
 ### Examples
@@ -225,11 +225,15 @@ only guards the EWS configuration UI.)
   truncates the JPEG (no trailing `FFD9`, gray tail). brscan wakes/polls first,
   sends an explicit `ScanRegion` with `MustHonor=true` so the JPEG length is
   fixed, and verifies each page is a complete JPEG. Transient network errors and
-  truncated pages are retried with exponential backoff (`--retries`, default 3);
-  if the scanner vanishes mid-job it is woken and the job is retried, and a drop
-  is never mistaken for "end of document".
-- **It's sheet-fed.** Load one page at a time, top-edge first and centered. A
-  flashing exclamation LED usually means a paper jam or unlatched cover.
+  truncated pages are retried with capped exponential backoff (`--retries`,
+  default 5); if the scanner vanishes mid-job it is woken and the job is retried,
+  and a drop is never mistaken for "end of document".
+- **It's sheet-fed and can jam.** Load one page at a time, top-edge first and
+  centered. A flashing exclamation LED usually means a paper jam or unlatched
+  cover. In `scanfile`'s interactive mode, if a sheet fails mid-transfer after
+  the auto-retries, it isn't fatal: you get a "possible paper jam" prompt so you
+  can clear the feeder, reload that sheet, and press Enter to retry (or Esc to
+  finish with the pages already captured).
 
 ## Tested on
 

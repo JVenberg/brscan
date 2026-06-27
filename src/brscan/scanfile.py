@@ -128,7 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-H", "--host", default=os.environ.get("BRSCAN_HOST") or None)
     p.add_argument("-P", "--port", type=int, default=int(os.environ.get("BRSCAN_PORT", "0")) or None)
     p.add_argument("-w", "--wait", type=int, default=int(os.environ.get("BRSCAN_WAKE_SECS", "25")))
-    p.add_argument("--retries", type=int, default=int(os.environ.get("BRSCAN_RETRIES", "3")))
+    p.add_argument("--retries", type=int, default=int(os.environ.get("BRSCAN_RETRIES", "5")))
     p.add_argument("--discover-secs", type=float, default=float(os.environ.get("BRSCAN_DISCOVER_SECS", "4")))
     p.add_argument("-v", "--verbose", action="store_true")
     return p

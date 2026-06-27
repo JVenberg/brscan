@@ -82,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="eSCL port (default: discovered, else 8080)")
     p.add_argument("-w", "--wait", type=int, default=int(_env("BRSCAN_WAKE_SECS", "25")),
                    help="poll a sleeping scanner up to SECS (default 25)")
-    p.add_argument("--retries", type=int, default=int(_env("BRSCAN_RETRIES", "3")),
+    p.add_argument("--retries", type=int, default=int(_env("BRSCAN_RETRIES", "5")),
                    help="network retry attempts per request, with backoff (default 3)")
     p.add_argument("--discover-secs", type=float, default=float(_env("BRSCAN_DISCOVER_SECS", "4")),
                    help=argparse.SUPPRESS)
@@ -232,7 +232,7 @@ def scan_one_job(scanner: Scanner, settings: ScanSettings, pagedir: Path,
                  page_count: int, wait: int) -> int:
     """POST one job and append every page it returns. Returns the new page count.
 
-    Raises Recoverable (no sheet / empty), Unreachable (lost the scanner), or Fatal.
+    Raises Recoverable (no sheet / empty / suspected jam), Unreachable, or Fatal.
     """
     try:
         job = scanner.create_job(settings)
@@ -243,6 +243,7 @@ def scan_one_job(scanner: Scanner, settings: ScanSettings, pagedir: Path,
         job = scanner.create_job(settings)
 
     added = 0
+    hit_error = False
     while True:
         n = page_count + 1
         pf = pagedir / f"page-{n:03d}.jpg"
@@ -254,14 +255,19 @@ def scan_one_job(scanner: Scanner, settings: ScanSettings, pagedir: Path,
             page_count, added = n, added + 1
             note(f"WARNING: page {page_count} is incomplete after retries; keeping the partial image.")
         elif status == "error":
-            note("WARNING: lost the connection mid-document; stopping with the pages captured so far.")
+            hit_error = True
             break
         else:  # done
             break
         if page_count >= MAX_PAGES:
             break
     if added == 0:
+        if hit_error:
+            raise Recoverable("possible paper jam or dropped Wi-Fi; that sheet did not scan")
         raise Recoverable("scanner accepted the job but returned no pages (empty feeder?)")
+    if hit_error:
+        note(f"kept {added} page(s) from this sheet before the connection dropped; "
+             "reload it if it was incomplete.")
     return page_count
 
 
