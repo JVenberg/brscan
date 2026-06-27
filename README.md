@@ -121,14 +121,16 @@ with no sheet loaded, brscan says so and re-prompts rather than giving up.
 
 `scanfile` is an optional companion that scans a document, sends the page
 image(s) to **Claude** to figure out what it is, and drops the resulting PDF into
-the right folder under your iCloud Documents (or any base directory) with a
-descriptive name. It is fully automatic: scan a receipt and it lands in
-`RECEIPTS/Safeway grocery receipt $71.29 2026-06-12.pdf` without you typing a
-name or picking a folder.
+the right subfolder of a dedicated, Claude-managed root with a descriptive name.
+It is fully automatic: scan a receipt and it lands in
+`Scans/RECEIPTS/Safeway grocery receipt $71.29 2026-06-12.pdf` without you typing
+a name or picking a folder.
 
-It learns your filing scheme from the folders you already have: it lists the
-existing subdirectories of the base directory and tells Claude to reuse one when
-it fits, only proposing a new folder when none do.
+The managed root (default `~/Library/Mobile Documents/com~apple~CloudDocs/Documents/Scans`)
+keeps filing self-contained: scanfile lists only that root's own subfolders and
+tells Claude to reuse one when it fits, proposing a new one when none do. Because
+the root is dedicated, Claude never has to wade through unrelated top-level
+Documents folders. Point it elsewhere with `--base-dir` or `SCANFILE_BASE_DIR`.
 
 ### Install (needs the `ai` extra)
 
@@ -149,7 +151,7 @@ export SCANFILE_API_KEY=sk-ant-...
 ### Usage
 
 ```sh
-scanfile                 # scan one sheet, classify, file under iCloud Documents
+scanfile                 # scan one sheet, classify, file under the Scans root
 scanfile -d              # duplex (front + back) into one PDF, then file
 scanfile --dry-run       # scan + classify, print where it WOULD go, don't move
 scanfile --folder TAXES  # force the folder; Claude still names the file
@@ -160,7 +162,7 @@ scanfile --model claude-haiku-4-5   # use a cheaper model to economize
 | --- | --- | --- |
 | `-d, --duplex` | scan both sides | off |
 | `-r, --res` / `-c, --color` / `-s, --size` / `--no-crop` | same as `brscan` | 300 / color / letter / crop on |
-| `--base-dir DIR` | destination root | `~/Library/Mobile Documents/com~apple~CloudDocs/Documents` |
+| `--base-dir DIR` | Claude-managed destination root | `.../CloudDocs/Documents/Scans` |
 | `--folder NAME` | force this folder, skip Claude's folder choice | Claude decides |
 | `--model ID` | Claude model (`SCANFILE_MODEL` env) | `claude-opus-4-8` |
 | `--dry-run` | classify but don't move; leave the PDF in `/tmp` | off |

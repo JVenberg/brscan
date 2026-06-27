@@ -24,7 +24,7 @@ from .cli import find_scanner, note, scan_one_job
 from .escl import COLOR_MODES, Fatal, Recoverable, ScanSettings
 from .output import assemble_pdf, crop
 
-DEFAULT_BASE = "~/Library/Mobile Documents/com~apple~CloudDocs/Documents"
+DEFAULT_BASE = "~/Library/Mobile Documents/com~apple~CloudDocs/Documents/Scans"
 DEFAULT_MODEL = "claude-opus-4-8"
 
 
