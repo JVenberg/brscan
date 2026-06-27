@@ -123,7 +123,7 @@ with no sheet loaded, brscan says so and re-prompts rather than giving up.
 image(s) to **Claude** to figure out what it is, and drops the resulting PDF into
 the right subfolder of a dedicated, Claude-managed root with a descriptive name.
 It is fully automatic: scan a receipt and it lands in
-`Scans/RECEIPTS/Safeway grocery receipt $71.29 2026-06-12.pdf` without you typing
+`Scans/Receipts/Safeway grocery receipt $71.29 2026-06-12.pdf` without you typing
 a name or picking a folder.
 
 The managed root (default `~/Library/Mobile Documents/com~apple~CloudDocs/Documents/Scans`)
@@ -154,7 +154,7 @@ export SCANFILE_API_KEY=sk-ant-...
 scanfile                 # scan one sheet, classify, file under the Scans root
 scanfile -d              # duplex (front + back) into one PDF, then file
 scanfile --dry-run       # scan + classify, print where it WOULD go, don't move
-scanfile --folder TAXES  # force the folder; Claude still names the file
+scanfile --folder Taxes  # force the folder; Claude still names the file
 scanfile --model claude-haiku-4-5   # use a cheaper model to economize
 ```
 

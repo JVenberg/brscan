@@ -26,9 +26,10 @@ class Filing(BaseModel):
         "'bank statement', 'utility bill', 'tax form', 'warranty'."
     )
     folder: str = Field(
-        description="Destination folder name in SCREAMING_SNAKE_CASE. Reuse one "
-        "of the existing folders when it clearly fits; only propose a new, "
-        "concise folder name when none do."
+        description="Destination folder name in PascalCase (e.g. 'Receipts', "
+        "'Offers', 'TaxForms', 'MedicalBills'). Reuse one of the existing "
+        "folders when it clearly fits; only propose a new, concise folder name "
+        "when none do."
     )
     vendor: str = Field(
         description="Business or organization the document is from, e.g. "
@@ -78,8 +79,9 @@ def classify(pages: List[Path], known_folders: List[str],
             f"Existing folders: {folders_line}.\n"
             "Look at the scanned page(s) and decide where the document belongs. "
             "Strongly prefer an existing folder when one fits; only propose a new "
-            "folder when none do. Folder names are SCREAMING_SNAKE_CASE. The page "
-            "may be rotated or upside down. Return the structured filing details."
+            "folder when none do. Folder names are PascalCase (e.g. Receipts, "
+            "Offers, TaxForms). The page may be rotated or upside down. Return the "
+            "structured filing details."
         ),
     }]
     for p in pages[:MAX_PAGES]:

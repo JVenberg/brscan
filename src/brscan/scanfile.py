@@ -47,8 +47,16 @@ def existing_folders(base: Path) -> List[str]:
 
 
 def sanitize_folder(name: str) -> str:
-    name = re.sub(r"[^A-Z0-9]+", "_", name.strip().upper()).strip("_")
-    return name or "UNFILED"
+    words = re.findall(r"[A-Za-z0-9]+", name)
+    out = []
+    for w in words:
+        # uppercase or lowercase tokens get title-cased; mixed-case tokens
+        # (already Pascal/camelCase, e.g. "RAV4Docs") keep their interior caps.
+        if w.isupper() or w.islower():
+            out.append(w[:1].upper() + w[1:].lower())
+        else:
+            out.append(w[:1].upper() + w[1:])
+    return "".join(out) or "Unfiled"
 
 
 def sanitize_filename(name: str) -> str:
