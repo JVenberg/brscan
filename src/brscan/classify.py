@@ -43,11 +43,21 @@ class Filing(BaseModel):
         description="Total amount for receipts/bills as a bare number like "
         "'71.29' (no currency symbol). Empty string if not applicable."
     )
-    summary: str = Field(description="A one-line human summary of the document.")
     filename: str = Field(
-        description="Concise, descriptive base filename WITHOUT extension and "
-        "WITHOUT a date or amount (those are added separately), e.g. "
-        "'Safeway grocery receipt' or 'HelloFresh 11 free meals (code EB-Z3TRJ)'."
+        description="A BRIEF base filename: at most ~4 words and ~40 characters, "
+        "WITHOUT extension, date, or amount. Prefer vendor plus a short document "
+        "type, e.g. 'Safeway receipt', 'HelloFresh offer', 'Invisalign agreement'. "
+        "Keep it short and scannable; put the detail in title/summary instead."
+    )
+    title: str = Field(
+        description="A clear, descriptive one-line document title for the PDF's "
+        "metadata (more detail than the filename), e.g. 'Smiles on Madison - "
+        "Invisalign payment agreement and proposed treatment plan'."
+    )
+    summary: str = Field(
+        description="A detailed 1-3 sentence description of the document for the "
+        "PDF metadata: capture the key specifics (parties, amounts, dates, terms, "
+        "what it is and what it's for)."
     )
 
 
@@ -80,8 +90,9 @@ def classify(pages: List[Path], known_folders: List[str],
             "Look at the scanned page(s) and decide where the document belongs. "
             "Strongly prefer an existing folder when one fits; only propose a new "
             "folder when none do. Folder names are PascalCase (e.g. Receipts, "
-            "Offers, TaxForms). The page may be rotated or upside down. Return the "
-            "structured filing details."
+            "Offers, TaxForms). Keep the filename brief; put the descriptive detail "
+            "in the title and summary (they become the PDF's metadata). The page "
+            "may be rotated or upside down. Return the structured filing details."
         ),
     }]
     for p in pages[:MAX_PAGES]:

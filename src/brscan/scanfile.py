@@ -69,11 +69,28 @@ def sanitize_filename(name: str) -> str:
 def build_name(filing) -> str:
     base = sanitize_filename(filing.filename)
     parts = [base]
-    if filing.amount and filing.amount not in base:
-        parts.append(f"${filing.amount}")
     if filing.date and filing.date not in base:
         parts.append(filing.date)
     return " ".join(parts) + ".pdf"
+
+
+def pdf_metadata(filing, folder: str):
+    keywords = [filing.document_type, filing.vendor, folder, filing.date,
+                (f"${filing.amount}" if filing.amount else "")]
+    md = {
+        "title": (filing.title or filing.filename).strip() or None,
+        "author": filing.vendor.strip() or None,
+        "subject": filing.summary.strip() or None,
+        "keywords": [k for k in keywords if k and k.strip()],
+        "creator": "scanfile (brscan)",
+    }
+    if filing.date:
+        try:
+            from datetime import datetime
+            md["creationdate"] = datetime.strptime(filing.date, "%Y-%m-%d")
+        except ValueError:
+            pass
+    return md
 
 
 def unique_path(path: Path) -> Path:
@@ -196,7 +213,7 @@ def main(argv=None) -> int:
         note(f"-> {filing.document_type}: {filing.summary}")
 
         tmp_pdf = pagedir / "out.pdf"
-        assemble_pdf(tmp_pdf, pages)
+        assemble_pdf(tmp_pdf, pages, metadata=pdf_metadata(filing, folder))
 
         if args.dry_run:
             keep = Path(tempfile.gettempdir()) / dest.name

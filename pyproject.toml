@@ -1,6 +1,6 @@
 [project]
 name = "brscan"
-version = "0.5.0"
+version = "0.6.0"
 description = "Trigger scans on Brother DSmobile (eSCL / Apple AirScan) scanners from the command line"
 readme = "README.md"
 license = { text = "MIT" }

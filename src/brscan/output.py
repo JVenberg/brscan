@@ -37,11 +37,23 @@ def crop(path: Path) -> None:
         pass
 
 
-def assemble_pdf(out_path: Path, pages: List[Path]) -> None:
+def assemble_pdf(out_path: Path, pages: List[Path], metadata: dict = None) -> None:
     import img2pdf
 
+    kwargs = {}
+    if metadata:
+        for key in ("title", "author", "subject", "creator", "producer"):
+            if metadata.get(key):
+                kwargs[key] = metadata[key]
+        keywords = [k for k in metadata.get("keywords", []) if k]
+        if keywords:
+            kwargs["keywords"] = keywords
+        when = metadata.get("creationdate")
+        if when is not None:
+            kwargs["creationdate"] = when
+
     with open(out_path, "wb") as f:
-        f.write(img2pdf.convert([str(p) for p in pages]))
+        f.write(img2pdf.convert([str(p) for p in pages], **kwargs))
 
 
 def save_jpegs(pages: List[Path], out_path: Path, note=None) -> None:

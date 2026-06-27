@@ -123,8 +123,9 @@ with no sheet loaded, brscan says so and re-prompts rather than giving up.
 image(s) to **Claude** to figure out what it is, and drops the resulting PDF into
 the right subfolder of a dedicated, Claude-managed root with a descriptive name.
 It is fully automatic: scan a receipt and it lands in
-`Scans/Receipts/Safeway grocery receipt $71.29 2026-06-12.pdf` without you typing
-a name or picking a folder.
+`Scans/Receipts/Safeway receipt 2026-06-12.pdf` without you typing a name or
+picking a folder. Filenames stay short; the full detail (vendor, amount, a
+descriptive title and summary) is written into the PDF's metadata.
 
 It is **interactive multi-page by default**: load a sheet and press Enter to scan
 it, repeat for as many sheets as the document has, then Esc (or `q`) to finish.
@@ -181,9 +182,13 @@ The base directory is also settable with `SCANFILE_BASE_DIR`. The default
 to a cheaper model (e.g. `claude-haiku-4-5`) to trade some accuracy for cost.
 
 Page images are downscaled and sent to the Messages API, and Claude returns a
-structured result (document type, folder, vendor, date, amount, summary, and a
-base filename) that drives the destination path. Scans never leave your machine
-except as that one classification request.
+structured result (document type, folder, vendor, date, amount, a brief filename,
+plus a descriptive title and detailed summary). The brief filename and folder
+drive where the PDF lands; the title, summary, vendor, date, amount, and document
+type are embedded in the PDF's metadata (Title / Subject / Author / Keywords /
+CreationDate), so Finder and Spotlight can search the rich detail while the
+filename stays short. Scans never leave your machine except as that one
+classification request.
 
 ## How it finds the scanner
 
