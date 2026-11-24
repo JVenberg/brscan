@@ -50,6 +50,10 @@ class Recoverable(Exception):
     """No paper / busy / empty feeder: caller may retry after loading a sheet."""
 
 
+class Jam(Recoverable):
+    """A sheet started feeding but no page came back (paper jam or dropped Wi-Fi)."""
+
+
 class Fatal(Exception):
     """Unrecoverable: wrong port, malformed response."""
 

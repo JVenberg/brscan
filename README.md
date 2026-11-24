@@ -196,6 +196,41 @@ CreationDate), so Finder and Spotlight can search the rich detail while the
 filename stays short. Scans never leave your machine except as that one
 classification request.
 
+## `scanfile-watch`: always-on, no laptop
+
+`scanfile-watch` runs on an always-on Linux box (a homeserver, a Raspberry Pi) and
+turns the scanner into an appliance: feed a sheet and the document shows up in
+Google Drive, filed by Claude, with a phone notification.
+
+- It polls the scanner's eSCL status every few seconds and starts a scan as soon as
+  the feeder reports a sheet (`AdfState` = `ScannerAdfLoaded`).
+- Sheets fed within 45 s of each other become one document (`SCANFILE_IDLE_SECS`).
+- A jam sends a notification and holds the document open for 5 minutes so you can
+  re-feed the sheet (`SCANFILE_JAM_SECS`).
+- The PDF is classified like `scanfile` and uploaded with rclone under
+  `SCANFILE_DRIVE_REMOTE`, e.g. `scans:Scans`. A failed classification goes to
+  `Unfiled/`; a failed upload is kept under `/data/pending` and retried.
+- Notifications are POSTed as `{title, message, url}` to `SCANFILE_NOTIFY_URL`, for
+  example a Home Assistant webhook (`deploy/ha-automation.yaml`). The URL opens the
+  file in Drive.
+
+### Deploy with Docker Compose
+
+1. Create an rclone Google Drive remote limited to files it creates (on any machine
+   with a browser): `rclone config create scans drive scope=drive.file`. Copy that
+   remote's section from `rclone config file` into `rclone/rclone.conf` next to
+   the compose file (`chmod 600`). rclone refreshes the token in place, so keep the
+   directory writable.
+2. Copy `deploy/compose.yaml` and `deploy/scanfile.env.example` (as
+   `scanfile.env`, `chmod 600`) to the host and fill in the API key and webhook URL.
+3. `docker compose up -d --build`. The service restarts with Docker at boot, and
+   its healthcheck works with `autoheal`.
+
+It uses the host network so it can discover the scanner over mDNS (by IP, since
+containers can't resolve `.local` names) and reach Home Assistant on 127.0.0.1.
+Set `BRSCAN_HOST` to a DHCP-reserved IP to skip discovery. While it runs, it
+picks up any sheet fed into the scanner, so stop it before scanning from a laptop.
+
 ## How it finds the scanner
 
 Resolution order: **`-H`/`BRSCAN_HOST` → cached host → mDNS discovery**.

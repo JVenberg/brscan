@@ -62,8 +62,12 @@ def forget_cache() -> bool:
         return False
 
 
-def discover(timeout: float = 4.0) -> Optional[Endpoint]:
-    """Return (host, port) for the first eSCL scanner found, or None."""
+def discover(timeout: float = 4.0, prefer_ip: bool = False) -> Optional[Endpoint]:
+    """Return (host, port) for the first eSCL scanner found, or None.
+
+    prefer_ip returns the IPv4 address instead of the .local name, for hosts
+    (such as Linux containers) whose resolver can't look up mDNS names.
+    """
     from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
 
     result: dict = {}
@@ -77,9 +81,9 @@ def discover(timeout: float = 4.0) -> Optional[Endpoint]:
             info = zc.get_service_info(type_, name, timeout=resolve_ms)
             if not info or not info.port:
                 return
-            host = (info.server or "").rstrip(".")
+            addrs = [a for a in info.parsed_addresses() if ":" not in a]
+            host = "" if prefer_ip else (info.server or "").rstrip(".")
             if not host:
-                addrs = info.parsed_addresses() if hasattr(info, "parsed_addresses") else []
                 host = addrs[0] if addrs else ""
             if host:
                 result["endpoint"] = (host, info.port)

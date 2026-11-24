@@ -1,0 +1,26 @@
+name: scanfile
+
+services:
+  scanfile:
+    build: https://github.com/JVenberg/brscan.git#v0.9.0
+    image: scanfile:0.9.0
+    restart: unless-stopped
+    init: true
+    # mDNS scanner discovery and the Home Assistant webhook on 127.0.0.1 need the host network.
+    network_mode: host
+    user: "1000:1000"
+    env_file: scanfile.env
+    environment:
+      TZ: America/Los_Angeles
+      SCANFILE_DRIVE_REMOTE: "scans:Scans"
+    volumes:
+      - ./rclone:/config
+      - ./data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "find /data/heartbeat -mmin -10 | grep -q ."]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 2m
+    labels:
+      autoheal: "true"

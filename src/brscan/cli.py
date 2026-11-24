@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from . import __version__, discovery
-from .escl import COLOR_MODES, Fatal, Recoverable, Scanner, ScanSettings, Unreachable
+from .escl import COLOR_MODES, Fatal, Jam, Recoverable, Scanner, ScanSettings, Unreachable
 from .output import assemble_pdf, crop, save_jpegs
 
 MAX_PAGES = 200
@@ -263,7 +263,7 @@ def scan_one_job(scanner: Scanner, settings: ScanSettings, pagedir: Path,
             break
     if added == 0:
         if hit_error:
-            raise Recoverable("possible paper jam or dropped Wi-Fi; that sheet did not scan")
+            raise Jam("possible paper jam or dropped Wi-Fi; that sheet did not scan")
         raise Recoverable("scanner accepted the job but returned no pages (empty feeder?)")
     if hit_error:
         note(f"kept {added} page(s) from this sheet before the connection dropped; "

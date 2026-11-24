@@ -1,0 +1,17 @@
+# Home Assistant automation: relays scanfile-watch notifications to a phone.
+# Use the same webhook ID as SCANFILE_NOTIFY_URL and your own notify.mobile_app_* service.
+- id: scanfile_notify
+  alias: Scanfile notification
+  mode: queued
+  triggers:
+    - trigger: webhook
+      webhook_id: scanfile-REPLACE-WITH-RANDOM-ID
+      allowed_methods: [POST]
+      local_only: true
+  actions:
+    - action: notify.mobile_app_REPLACE_DEVICE
+      data:
+        title: "{{ trigger.json.title }}"
+        message: "{{ trigger.json.message }}"
+        data:
+          url: "{{ trigger.json.url }}"

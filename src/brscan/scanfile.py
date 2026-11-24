@@ -17,9 +17,10 @@ import re
 import shutil
 import sys
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from .cli import _have_tty, find_scanner, note, prompt_continue, scan_one_job
 from .escl import COLOR_MODES, Fatal, Recoverable, ScanSettings, Unreachable
@@ -99,6 +100,31 @@ def pdf_metadata(filing, folder: str):
 
 def unfiled_name(now: datetime = None) -> str:
     return f"Scan {(now or datetime.now()):%Y-%m-%d %H%M%S}.pdf"
+
+
+@dataclass
+class Plan:
+    folder: str
+    name: str
+    metadata: dict
+    filing: Optional[object] = None
+    error: Optional[str] = None
+
+
+def plan_filing(classify_fn, pages: List[Path], folders: List[str],
+                forced_folder: Optional[str] = None, **classify_kw) -> Plan:
+    """Classify the pages and decide folder, filename, and PDF metadata.
+
+    Never raises for a classification failure: the plan falls back to Unfiled/.
+    """
+    try:
+        filing = classify_fn(pages, folders, **classify_kw)
+    except Exception as exc:
+        fallback = sanitize_folder(forced_folder) if forced_folder else UNFILED
+        return Plan(fallback, unfiled_name(), {"creator": CREATOR},
+                    error=str(exc) or type(exc).__name__)
+    folder = sanitize_folder(forced_folder or filing.folder)
+    return Plan(folder, build_name(filing), pdf_metadata(filing, folder), filing)
 
 
 def unique_path(path: Path) -> Path:
@@ -213,25 +239,18 @@ def main(argv=None) -> int:
 
         note(f"classifying {len(pages)} page(s) with {args.model} (effort {args.effort})...")
         folders = [args.folder] if args.folder else existing_folders(base)
-        try:
-            filing = classify_mod.classify(pages, folders, model=args.model,
-                                           api_key=api_key, effort=args.effort)
-        except Exception as exc:
-            note(f"classification failed ({exc}); filing under {UNFILED}/ so the scan isn't lost.")
-            filing = None
-
-        if filing is None:
-            folder = sanitize_folder(args.folder) if args.folder else UNFILED
-            name, metadata = unfiled_name(), {"creator": CREATOR}
+        plan = plan_filing(classify_mod.classify, pages, folders, forced_folder=args.folder,
+                           model=args.model, api_key=api_key, effort=args.effort)
+        if plan.error:
+            note(f"classification failed ({plan.error}); filing under {plan.folder}/ "
+                 "so the scan isn't lost.")
         else:
-            folder = sanitize_folder(args.folder or filing.folder)
-            name, metadata = build_name(filing), pdf_metadata(filing, folder)
-            note(f"-> {filing.document_type}: {filing.summary}")
-        dest_dir = base / folder
-        dest = unique_path(dest_dir / name)
+            note(f"-> {plan.filing.document_type}: {plan.filing.summary}")
+        dest_dir = base / plan.folder
+        dest = unique_path(dest_dir / plan.name)
 
         tmp_pdf = pagedir / "out.pdf"
-        assemble_pdf(tmp_pdf, pages, metadata=metadata)
+        assemble_pdf(tmp_pdf, pages, metadata=plan.metadata)
 
         if args.dry_run:
             keep = Path(tempfile.gettempdir()) / dest.name

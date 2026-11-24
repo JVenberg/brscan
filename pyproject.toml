@@ -1,6 +1,6 @@
 [project]
 name = "brscan"
-version = "0.8.0"
+version = "0.9.0"
 description = "Trigger scans on Brother DSmobile (eSCL / Apple AirScan) scanners from the command line"
 readme = "README.md"
 license = { text = "MIT" }
@@ -35,6 +35,7 @@ Repository = "https://github.com/JVenberg/brscan"
 [project.scripts]
 brscan = "brscan.cli:main"
 scanfile = "brscan.scanfile:main"
+scanfile-watch = "brscan.watch:main"
 
 [build-system]
 requires = ["hatchling"]
