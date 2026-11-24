@@ -17,6 +17,7 @@ import re
 import shutil
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import List
 
@@ -25,7 +26,11 @@ from .escl import COLOR_MODES, Fatal, Recoverable, ScanSettings, Unreachable
 from .output import assemble_pdf, crop
 
 DEFAULT_BASE = "~/Library/Mobile Documents/com~apple~CloudDocs/Documents/Scans"
-DEFAULT_MODEL = "claude-opus-4-8"
+DEFAULT_MODEL = "claude-opus-5-5"
+DEFAULT_EFFORT = "medium"
+EFFORTS = ["low", "medium", "high"]
+UNFILED = "Unfiled"
+CREATOR = "scanfile (brscan)"
 
 
 def die(msg: str, code: int = 1) -> "None":
@@ -82,15 +87,18 @@ def pdf_metadata(filing, folder: str):
         "author": filing.vendor.strip() or None,
         "subject": filing.summary.strip() or None,
         "keywords": [k for k in keywords if k and k.strip()],
-        "creator": "scanfile (brscan)",
+        "creator": CREATOR,
     }
     if filing.date:
         try:
-            from datetime import datetime
             md["creationdate"] = datetime.strptime(filing.date, "%Y-%m-%d")
         except ValueError:
             pass
     return md
+
+
+def unfiled_name(now: datetime = None) -> str:
+    return f"Scan {(now or datetime.now()):%Y-%m-%d %H%M%S}.pdf"
 
 
 def unique_path(path: Path) -> Path:
@@ -123,6 +131,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--folder", help="force this destination folder; skip Claude's folder choice")
     p.add_argument("--model", default=os.environ.get("SCANFILE_MODEL", DEFAULT_MODEL),
                    help=f"Claude model (default {DEFAULT_MODEL}; set a cheaper one to economize)")
+    p.add_argument("--effort", choices=EFFORTS,
+                   default=os.environ.get("SCANFILE_EFFORT", DEFAULT_EFFORT),
+                   help=f"thinking effort (default {DEFAULT_EFFORT})")
     p.add_argument("--dry-run", action="store_true",
                    help="scan and classify but don't move the file")
     p.add_argument("-H", "--host", default=os.environ.get("BRSCAN_HOST") or None)
@@ -200,20 +211,27 @@ def main(argv=None) -> int:
             for p in pages:
                 crop(p)
 
-        note(f"classifying {len(pages)} page(s) with {args.model}...")
+        note(f"classifying {len(pages)} page(s) with {args.model} (effort {args.effort})...")
         folders = [args.folder] if args.folder else existing_folders(base)
-        filing = classify_mod.classify(pages, folders, model=args.model, api_key=api_key)
+        try:
+            filing = classify_mod.classify(pages, folders, model=args.model,
+                                           api_key=api_key, effort=args.effort)
+        except Exception as exc:
+            note(f"classification failed ({exc}); filing under {UNFILED}/ so the scan isn't lost.")
+            filing = None
+
         if filing is None:
-            die("Claude could not classify the document (no structured output).")
-
-        folder = sanitize_folder(args.folder or filing.folder)
+            folder = sanitize_folder(args.folder) if args.folder else UNFILED
+            name, metadata = unfiled_name(), {"creator": CREATOR}
+        else:
+            folder = sanitize_folder(args.folder or filing.folder)
+            name, metadata = build_name(filing), pdf_metadata(filing, folder)
+            note(f"-> {filing.document_type}: {filing.summary}")
         dest_dir = base / folder
-        dest = unique_path(dest_dir / build_name(filing))
-
-        note(f"-> {filing.document_type}: {filing.summary}")
+        dest = unique_path(dest_dir / name)
 
         tmp_pdf = pagedir / "out.pdf"
-        assemble_pdf(tmp_pdf, pages, metadata=pdf_metadata(filing, folder))
+        assemble_pdf(tmp_pdf, pages, metadata=metadata)
 
         if args.dry_run:
             keep = Path(tempfile.gettempdir()) / dest.name

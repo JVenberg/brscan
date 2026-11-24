@@ -163,7 +163,7 @@ scanfile --single        # one sheet only, no multi-page loop
 scanfile -d              # duplex: each sheet adds front + back
 scanfile --dry-run       # scan + classify, print where it WOULD go, don't move
 scanfile --folder Taxes  # force the folder; Claude still names the file
-scanfile --model claude-haiku-4-5   # use a cheaper model to economize
+scanfile --model claude-haiku-5-5   # use a cheaper model to economize
 ```
 
 | Option | Description | Default |
@@ -173,13 +173,19 @@ scanfile --model claude-haiku-4-5   # use a cheaper model to economize
 | `-r, --res` / `-c, --color` / `-s, --size` / `--no-crop` | same as `brscan` | 300 / color / letter / crop on |
 | `--base-dir DIR` | Claude-managed destination root | `.../CloudDocs/Documents/Scans` |
 | `--folder NAME` | force this folder, skip Claude's folder choice | Claude decides |
-| `--model ID` | Claude model (`SCANFILE_MODEL` env) | `claude-opus-4-8` |
+| `--model ID` | Claude model (`SCANFILE_MODEL` env) | `claude-opus-5-5` |
+| `--effort LEVEL` | thinking effort: low / medium / high (`SCANFILE_EFFORT` env) | `medium` |
 | `--dry-run` | classify but don't move; leave the PDF in `/tmp` | off |
 | `-H` / `-P` / `-w` / `--retries` / `--discover-secs` / `-v` | same as `brscan` | |
 
 The base directory is also settable with `SCANFILE_BASE_DIR`. The default
-`claude-opus-4-8` gives the best classification; set `--model`/`SCANFILE_MODEL`
-to a cheaper model (e.g. `claude-haiku-4-5`) to trade some accuracy for cost.
+`claude-opus-5-5` gives the best classification; set `--model`/`SCANFILE_MODEL`
+to a cheaper model (e.g. `claude-haiku-5-5`) to trade some accuracy for cost.
+Requests opt into server-side refusal fallback, so a document the primary model
+declines is retried on a fallback model instead of failing.
+
+If classification fails for any reason (network error, refusal, bad output), the
+scan is not lost: the PDF is filed under `Unfiled/` with a timestamped name.
 
 Page images are downscaled and sent to the Messages API, and Claude returns a
 structured result (document type, folder, vendor, date, amount, a brief filename,

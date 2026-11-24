@@ -12,11 +12,20 @@ import io
 from pathlib import Path
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
-DEFAULT_MODEL = "claude-opus-4-8"
+DEFAULT_MODEL = "claude-opus-5-5"
+DEFAULT_EFFORT = "medium"
+EFFORTS = ("low", "medium", "high")
 MAX_EDGE = 1568  # downscale long edge before upload to keep image tokens modest
 MAX_PAGES = 2
+# Thinking is always on and counts toward max_tokens.
+MAX_TOKENS = 16000
+FALLBACK_BETA = "server-side-fallback-2026-07-01"
+
+
+class ClassifyError(Exception):
+    """Claude returned no usable filing (refusal, truncation, or bad output)."""
 
 
 class Filing(BaseModel):
@@ -77,7 +86,8 @@ def _encode_image(path: Path, max_edge: int = MAX_EDGE):
 
 def classify(pages: List[Path], known_folders: List[str],
              model: str = DEFAULT_MODEL,
-             api_key: Optional[str] = None) -> Optional[Filing]:
+             api_key: Optional[str] = None,
+             effort: str = DEFAULT_EFFORT) -> Filing:
     import anthropic
 
     client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
@@ -105,10 +115,24 @@ def classify(pages: List[Path], known_folders: List[str],
             },
         })
 
-    resp = client.messages.parse(
+    # create + validate (not parse) so stop_reason is checked before the JSON is parsed.
+    resp = client.beta.messages.create(
         model=model,
-        max_tokens=1024,
+        max_tokens=MAX_TOKENS,
         messages=[{"role": "user", "content": content}],
-        output_format=Filing,
+        output_config={
+            "effort": effort,
+            "format": {"type": "json_schema", "schema": anthropic.transform_schema(Filing)},
+        },
+        betas=[FALLBACK_BETA],
+        fallbacks="default",
     )
-    return resp.parsed_output
+    if resp.stop_reason == "refusal":
+        raise ClassifyError("Claude declined to classify this document")
+    if resp.stop_reason == "max_tokens":
+        raise ClassifyError("response was cut off (max_tokens)")
+    text = "".join(b.text for b in resp.content if b.type == "text")
+    try:
+        return Filing.model_validate_json(text)
+    except ValidationError as exc:
+        raise ClassifyError(f"unexpected output: {exc.errors()[0]['msg']}") from exc

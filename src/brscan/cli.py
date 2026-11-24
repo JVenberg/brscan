@@ -83,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-w", "--wait", type=int, default=int(_env("BRSCAN_WAKE_SECS", "25")),
                    help="poll a sleeping scanner up to SECS (default 25)")
     p.add_argument("--retries", type=int, default=int(_env("BRSCAN_RETRIES", "5")),
-                   help="network retry attempts per request, with backoff (default 3)")
+                   help="network retry attempts per request, with backoff (default 5)")
     p.add_argument("--discover-secs", type=float, default=float(_env("BRSCAN_DISCOVER_SECS", "4")),
                    help=argparse.SUPPRESS)
     p.add_argument("-v", "--verbose", action="store_true", help="print request XML and HTTP details")

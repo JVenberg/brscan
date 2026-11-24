@@ -253,7 +253,7 @@ class Scanner:
                     self._notify(f"network error fetching page; retrying in {delay:.0f}s "
                                  f"({attempt + 1}/{self.retries})...")
                     time.sleep(delay)
-                    delay *= 2
+                    delay = min(delay * 2, self.max_delay)
                     continue
                 if dest.exists() and dest.stat().st_size > 0:
                     return "incomplete"
