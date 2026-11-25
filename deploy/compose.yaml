@@ -2,8 +2,8 @@ name: scanfile
 
 services:
   scanfile:
-    build: https://github.com/JVenberg/brscan.git#v0.9.0
-    image: scanfile:0.9.0
+    build: https://github.com/JVenberg/brscan.git#v0.10.0
+    image: scanfile:0.10.0
     restart: unless-stopped
     init: true
     # mDNS scanner discovery and the Home Assistant webhook on 127.0.0.1 need the host network.
@@ -13,6 +13,7 @@ services:
     environment:
       TZ: America/Los_Angeles
       SCANFILE_DRIVE_REMOTE: "scans:Scans"
+      BRSCAN_DUPLEX: "1"
     volumes:
       - ./rclone:/config
       - ./data:/data

@@ -1,15 +1,16 @@
 """scanfile-watch: always-on sidecar that files every document fed into the scanner.
 
 Polls the scanner's eSCL status. When a sheet is inserted it scans it, groups
-sheets fed within a short window into one document, classifies the document with
-Claude, uploads the PDF to Google Drive through rclone, and sends a phone
-notification through a Home Assistant webhook. Built to run as a container on an
+sheets fed within a short window into a batch, drops blank pages, has Claude split
+the batch into documents and file each one, uploads the PDFs to Google Drive
+through rclone, and sends a phone notification through a Home Assistant webhook. Built to run as a container on an
 always-on host; see deploy/ in the repository.
 """
 
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import os
 import shutil
@@ -18,6 +19,7 @@ import sys
 import tempfile
 import time
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
@@ -28,8 +30,8 @@ from . import discovery
 from .cli import scan_one_job
 from .escl import (COLOR_MODES, ESCL_NS, PWG_NS, Fatal, Jam, Recoverable, Scanner,
                    ScanSettings, Unreachable)
-from .output import assemble_pdf, crop
-from .scanfile import DEFAULT_EFFORT, DEFAULT_MODEL, EFFORTS, plan_filing, unique_path
+from .output import BLANK_INK, assemble_pdf, crop, ink_ratio
+from .scanfile import DEFAULT_EFFORT, DEFAULT_MODEL, EFFORTS, plan_batch, unique_path
 
 LOADED = "ScannerAdfLoaded"
 PENDING_RETRY_SECS = 300
@@ -92,6 +94,30 @@ class Drive:
             return None
         return f"https://drive.google.com/file/d/{file_id}/view" if file_id else None
 
+    def root_link(self) -> Optional[str]:
+        try:
+            folder_id = json.loads(self._rclone("lsjson", "--stat", self.remote)).get("ID")
+        except (RuntimeError, ValueError):
+            return None
+        return f"https://drive.google.com/drive/folders/{folder_id}" if folder_id else None
+
+
+def _pages(n: int) -> str:
+    return f"{n} page{'s' if n != 1 else ''}"
+
+
+@dataclass
+class Filed:
+    folder: str
+    name: str
+    pages: int
+    link: Optional[str] = None
+    error: Optional[str] = None  # classification failed; filed under Unfiled
+    upload_error: Optional[str] = None  # kept under pending/ for retry
+
+    def line(self, extra: str = "") -> str:
+        return f"{self.folder}/{self.name} ({_pages(self.pages)}{extra})"
+
 
 class Notifier:
     """POSTs {title, message, url} to a Home Assistant webhook; logs either way."""
@@ -112,11 +138,11 @@ class Notifier:
 
 class Watcher:
     def __init__(self, args, drive: Drive, notify: Callable[..., None],
-                 classify_fn: Callable, sleep: Callable[[float], None] = time.sleep):
+                 split_fn: Callable, sleep: Callable[[float], None] = time.sleep):
         self.args = args
         self.drive = drive
         self.notify = notify
-        self.classify_fn = classify_fn
+        self.split_fn = split_fn
         self.sleep = sleep
         self.data = Path(args.data_dir)
         self.work = self.data / "work"
@@ -186,12 +212,15 @@ class Watcher:
         a = self.args
         batch = Path(tempfile.mkdtemp(prefix="doc-", dir=self.work))
         count = 0
+        sheet_starts: List[int] = []
         try:
             while True:
                 self.sleep(a.settle)
                 window = a.idle
+                before = count
                 try:
                     count = scan_one_job(self.scanner, self.settings, batch, count, a.wait)
+                    sheet_starts.append(before)
                     log(f"{count} page(s) so far; waiting {a.idle:.0f}s for another sheet")
                 except (Jam, Unreachable) as exc:
                     window = a.jam
@@ -209,44 +238,95 @@ class Watcher:
                 if not self.wait_for_sheet(window):
                     break
             if count:
-                self.file_document(batch)
+                self.file_document(batch, sheet_starts)
             return count > 0
         finally:
             shutil.rmtree(batch, ignore_errors=True)
 
-    def file_document(self, batch: Path) -> None:
+    def file_document(self, batch: Path, sheet_starts: Optional[List[int]] = None) -> None:
         a = self.args
         pages = sorted(batch.glob("page-*.jpg"))
+        starts = sorted(set(sheet_starts or range(len(pages))) | {0})
+        sheet_of = [bisect.bisect_right(starts, i) - 1 for i in range(len(pages))]
         if a.crop:
             for p in pages:
                 crop(p)
+        keep = self.non_blank(pages) if a.drop_blank else list(range(len(pages)))
+        kept = [pages[i] for i in keep]
+        firsts = [j for j, i in enumerate(keep) if j == 0 or sheet_of[i] != sheet_of[keep[j - 1]]]
+        labels = None
+        if a.duplex:
+            labels = [f"sheet {sheet_of[i] + 1}, {'front' if i == starts[sheet_of[i]] else 'back'}"
+                      for i in keep]
         try:
             folders = self.drive.folders()
         except Exception as exc:
             log(f"could not list Drive folders: {exc}")
             folders = []
-        log(f"classifying {len(pages)} page(s) with {a.model}...")
-        plan = plan_filing(self.classify_fn, pages, folders, model=a.model,
-                           api_key=a.api_key, effort=a.effort)
-        pdf = batch / "out.pdf"
+        log(f"classifying {len(kept)} page(s) with {a.model}...")
+        docs = plan_batch(self.split_fn, kept, folders, sheet_starts=firsts, labels=labels,
+                          model=a.model, api_key=a.api_key, effort=a.effort)
+        results = [self.file_one(batch / f"doc-{n:03d}.pdf", doc_pages, plan)
+                   for n, (doc_pages, plan) in enumerate(docs, start=1)]
+        self.report(results, len(pages) - len(kept))
+
+    def non_blank(self, pages: List[Path]) -> List[int]:
+        keep = []
+        for i, p in enumerate(pages):
+            try:
+                ratio = ink_ratio(p)
+            except Exception as exc:
+                log(f"page {i + 1}: blank check failed ({exc}); keeping it")
+                keep.append(i)
+                continue
+            blank = ratio < BLANK_INK
+            log(f"page {i + 1}: ink {ratio:.3%}" + (" (blank, dropped)" if blank else ""))
+            if not blank:
+                keep.append(i)
+        if not keep:
+            log("every page looks blank; keeping them all")
+            return list(range(len(pages)))
+        return keep
+
+    def file_one(self, pdf: Path, pages: List[Path], plan) -> Filed:
         assemble_pdf(pdf, pages, metadata=plan.metadata)
-        pages_note = f"{len(pages)} page{'s' if len(pages) != 1 else ''}"
+        filed = Filed(plan.folder, plan.name, len(pages), error=plan.error)
         try:
-            name = self.drive.unique_name(plan.folder, plan.name)
-            link = self.drive.upload(pdf, plan.folder, name)
+            filed.name = self.drive.unique_name(plan.folder, plan.name)
+            filed.link = self.drive.upload(pdf, plan.folder, filed.name)
         except Exception as exc:
             keep = unique_path(self.pending / plan.folder / plan.name)
             keep.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(pdf), str(keep))
-            self.notify("Scan saved on the server",
-                        f"Drive upload failed, will retry: {plan.folder}/{plan.name} ({exc})")
+            filed.name, filed.upload_error = keep.name, str(exc)
+        return filed
+
+    def report(self, results: List[Filed], blanks: int) -> None:
+        blank_note = f"{blanks} blank page{'s' if blanks != 1 else ''} removed" if blanks else ""
+        if len(results) == 1:
+            r = results[0]
+            if r.upload_error:
+                self.notify("Scan saved on the server",
+                            f"Drive upload failed, will retry: {r.folder}/{r.name} ({r.upload_error})")
+            elif r.error:
+                self.notify("Scan filed in Unfiled",
+                            f"{r.line()}. Classification failed: {r.error}", r.link)
+            else:
+                self.notify("Scan filed", r.line(f", {blank_note}" if blank_note else ""), r.link)
             return
-        if plan.error:
-            self.notify("Scan filed in Unfiled",
-                        f"{plan.folder}/{name} ({pages_note}). Classification failed: {plan.error}",
-                        link)
-        else:
-            self.notify("Scan filed", f"{plan.folder}/{name} ({pages_note})", link)
+        lines = []
+        for r in results:
+            if r.upload_error:
+                lines.append(f"{r.line()}: saved on the server, upload will retry")
+            elif r.error:
+                lines.append(f"{r.line()}: classification failed")
+            else:
+                lines.append(r.line())
+        if blank_note:
+            lines.append(f"{blank_note[0].upper()}{blank_note[1:]}.")
+        bad = sum(1 for r in results if r.error or r.upload_error)
+        title = f"Filed {len(results)} documents" + (f", {bad} need attention" if bad else "")
+        self.notify(title, "\n".join(lines), self.drive.root_link())
 
     def retry_pending(self) -> None:
         if time.monotonic() - self.last_pending_try < PENDING_RETRY_SECS:
@@ -315,12 +395,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-d", "--duplex", action="store_true",
                    default=_env("BRSCAN_DUPLEX", "0").lower() in ("1", "true", "yes"))
     p.add_argument("--no-crop", dest="crop", action="store_false", default=True)
+    p.add_argument("--keep-blank", dest="drop_blank", action="store_false",
+                   default=_env("SCANFILE_KEEP_BLANK", "0").lower() not in ("1", "true", "yes"),
+                   help="keep pages that look blank (SCANFILE_KEEP_BLANK)")
     p.add_argument("--poll", type=float, default=float(_env("SCANFILE_POLL_SECS", "3")),
                    help="seconds between feeder checks while the scanner is awake")
     p.add_argument("--offline-poll", type=float, default=float(_env("SCANFILE_OFFLINE_POLL_SECS", "10")),
                    help="seconds between checks while the scanner is unreachable")
     p.add_argument("--idle", type=float, default=float(_env("SCANFILE_IDLE_SECS", "45")),
-                   help="a sheet fed within this many seconds joins the same document")
+                   help="a sheet fed within this many seconds joins the same batch")
     p.add_argument("--jam", type=float, default=float(_env("SCANFILE_JAM_SECS", "300")),
                    help="after a jam, seconds to wait for the sheet to be fed again")
     p.add_argument("--settle", type=float, default=float(_env("SCANFILE_SETTLE_SECS", "1.5")),
@@ -342,9 +425,9 @@ def main(argv=None) -> int:
     if not args.api_key:
         print("scanfile-watch: set SCANFILE_API_KEY", file=sys.stderr)
         return 2
-    from .classify import classify
+    from .classify import split
 
-    watcher = Watcher(args, Drive(args.drive), Notifier(args.notify_url), classify)
+    watcher = Watcher(args, Drive(args.drive), Notifier(args.notify_url), split)
     try:
         watcher.run()
     except KeyboardInterrupt:

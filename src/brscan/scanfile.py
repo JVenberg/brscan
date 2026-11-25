@@ -20,7 +20,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from .cli import _have_tty, find_scanner, note, prompt_continue, scan_one_job
 from .escl import COLOR_MODES, Fatal, Recoverable, ScanSettings, Unreachable
@@ -125,6 +125,49 @@ def plan_filing(classify_fn, pages: List[Path], folders: List[str],
                     error=str(exc) or type(exc).__name__)
     folder = sanitize_folder(forced_folder or filing.folder)
     return Plan(folder, build_name(filing), pdf_metadata(filing, folder), filing)
+
+
+def segment(n: int, starts: List[Tuple[int, object]],
+            sheet_starts: Optional[List[int]] = None) -> List[Tuple[range, object]]:
+    """Turn (first page, filing) pairs into page runs that cover 0..n-1 in order.
+
+    A start inside a sheet moves back to that sheet's first page; out-of-range and
+    duplicate starts are dropped, and the earliest document always starts at 0.
+    """
+    allowed = sorted(set(sheet_starts or range(n)) | {0})
+    chosen: dict = {}
+    for first, filing in sorted(starts, key=lambda s: s[0]):
+        if 0 <= first < n:
+            chosen.setdefault(max(a for a in allowed if a <= first), filing)
+    if not chosen:
+        return []
+    if 0 not in chosen:
+        chosen[0] = chosen.pop(min(chosen))
+    keys = sorted(chosen)
+    return [(range(k, end), chosen[k]) for k, end in zip(keys, keys[1:] + [n])]
+
+
+def plan_batch(split_fn, pages: List[Path], folders: List[str],
+               sheet_starts: Optional[List[int]] = None,
+               **split_kw) -> List[Tuple[List[Path], Plan]]:
+    """Split the pages into documents and plan each one.
+
+    Never raises for a classification failure: all pages become one Unfiled/ document.
+    """
+    try:
+        runs = segment(len(pages), split_fn(pages, folders, **split_kw), sheet_starts)
+        if not runs:
+            raise ValueError("no documents found")
+    except Exception as exc:
+        plan = Plan(UNFILED, unfiled_name(), {"creator": CREATOR},
+                    error=str(exc) or type(exc).__name__)
+        return [(list(pages), plan)]
+    out = []
+    for run, filing in runs:
+        folder = sanitize_folder(filing.folder)
+        plan = Plan(folder, build_name(filing), pdf_metadata(filing, folder), filing)
+        out.append(([pages[i] for i in run], plan))
+    return out
 
 
 def unique_path(path: Path) -> Path:

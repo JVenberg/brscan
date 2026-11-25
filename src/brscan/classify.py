@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import io
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -84,37 +84,40 @@ def _encode_image(path: Path, max_edge: int = MAX_EDGE):
     return base64.standard_b64encode(buf.getvalue()).decode("ascii")
 
 
-def classify(pages: List[Path], known_folders: List[str],
-             model: str = DEFAULT_MODEL,
-             api_key: Optional[str] = None,
-             effort: str = DEFAULT_EFFORT) -> Filing:
+class Document(BaseModel):
+    first_page: int = Field(
+        description="Number of the page (as labeled) where this document starts."
+    )
+    filing: Filing
+
+
+class Batch(BaseModel):
+    documents: List[Document] = Field(
+        description="Every document in the batch, in page order. The first starts at page 1."
+    )
+
+
+FILING_RULES = (
+    "Strongly prefer an existing folder when one fits; only propose a new "
+    "folder when none do. Folder names are PascalCase (e.g. Receipts, "
+    "Offers, TaxForms). Keep the filename brief; put the descriptive detail "
+    "in the title and summary (they become the PDF's metadata). Pages "
+    "may be rotated or upside down."
+)
+
+
+def _image_block(path: Path, max_edge: int = MAX_EDGE) -> dict:
+    return {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/jpeg",
+                   "data": _encode_image(path, max_edge)},
+    }
+
+
+def _ask(content: list, schema, model: str, api_key: Optional[str], effort: str):
     import anthropic
 
     client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
-    folders_line = ", ".join(known_folders) if known_folders else "(none yet)"
-    content: list = [{
-        "type": "text",
-        "text": (
-            "You are filing a scanned paper document into a folder on disk.\n"
-            f"Existing folders: {folders_line}.\n"
-            "Look at the scanned page(s) and decide where the document belongs. "
-            "Strongly prefer an existing folder when one fits; only propose a new "
-            "folder when none do. Folder names are PascalCase (e.g. Receipts, "
-            "Offers, TaxForms). Keep the filename brief; put the descriptive detail "
-            "in the title and summary (they become the PDF's metadata). The page "
-            "may be rotated or upside down. Return the structured filing details."
-        ),
-    }]
-    for p in pages[:MAX_PAGES]:
-        content.append({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/jpeg",
-                "data": _encode_image(p),
-            },
-        })
-
     # create + validate (not parse) so stop_reason is checked before the JSON is parsed.
     resp = client.beta.messages.create(
         model=model,
@@ -122,7 +125,7 @@ def classify(pages: List[Path], known_folders: List[str],
         messages=[{"role": "user", "content": content}],
         output_config={
             "effort": effort,
-            "format": {"type": "json_schema", "schema": anthropic.transform_schema(Filing)},
+            "format": {"type": "json_schema", "schema": anthropic.transform_schema(schema)},
         },
         betas=[FALLBACK_BETA],
         fallbacks="default",
@@ -133,6 +136,77 @@ def classify(pages: List[Path], known_folders: List[str],
         raise ClassifyError("response was cut off (max_tokens)")
     text = "".join(b.text for b in resp.content if b.type == "text")
     try:
-        return Filing.model_validate_json(text)
+        return schema.model_validate_json(text)
     except ValidationError as exc:
         raise ClassifyError(f"unexpected output: {exc.errors()[0]['msg']}") from exc
+
+
+def _folders_line(known_folders: List[str]) -> str:
+    return ", ".join(known_folders) if known_folders else "(none yet)"
+
+
+def classify(pages: List[Path], known_folders: List[str],
+             model: str = DEFAULT_MODEL,
+             api_key: Optional[str] = None,
+             effort: str = DEFAULT_EFFORT) -> Filing:
+    content: list = [{
+        "type": "text",
+        "text": (
+            "You are filing a scanned paper document into a folder on disk.\n"
+            f"Existing folders: {_folders_line(known_folders)}.\n"
+            "Look at the scanned page(s) and decide where the document belongs. "
+            f"{FILING_RULES} Return the structured filing details."
+        ),
+    }]
+    content += [_image_block(p) for p in pages[:MAX_PAGES]]
+    return _ask(content, Filing, model, api_key, effort)
+
+
+SPLIT_CHUNK = 40  # pages per request; keeps image count and request size well inside API limits
+
+
+def _split_edge(n: int) -> int:
+    return MAX_EDGE if n <= 10 else 1280 if n <= 20 else 1024
+
+
+def split(pages: List[Path], known_folders: List[str],
+          model: str = DEFAULT_MODEL,
+          api_key: Optional[str] = None,
+          effort: str = DEFAULT_EFFORT,
+          labels: Optional[List[str]] = None) -> List[Tuple[int, Filing]]:
+    """Split a batch of pages into documents and file each one.
+
+    Returns (first page index, filing) pairs, 0-based, in page order. labels
+    name each page for Claude (e.g. "sheet 2, back"); a new chunk always starts
+    a new document.
+    """
+    out: List[Tuple[int, Filing]] = []
+    for base in range(0, len(pages), SPLIT_CHUNK):
+        chunk = pages[base:base + SPLIT_CHUNK]
+        edge = _split_edge(len(chunk))
+        content: list = [{
+            "type": "text",
+            "text": (
+                "You are filing a batch of scanned pages into folders.\n"
+                f"Existing folders: {_folders_line(known_folders)}.\n"
+                "The pages were fed through a sheet-fed scanner one after another and "
+                "may hold several separate documents, for example a receipt, then a "
+                "two-page letter, then a bill. Split the batch into documents, each a "
+                "run of consecutive pages, and file each one. Pages of one document "
+                "share a sender, layout, or page numbering (\"Page 2 of 3\"), or "
+                "continue the previous page. Both sides of a sheet belong to the same "
+                f"document. {FILING_RULES}"
+            ),
+        }]
+        for i, p in enumerate(chunk, start=1):
+            label = labels[base + i - 1] if labels else ""
+            content.append({"type": "text", "text": f"Page {i}" + (f" ({label})" if label else "")})
+            content.append(_image_block(p, edge))
+        batch = _ask(content, Batch, model, api_key, effort)
+        if not batch.documents:
+            raise ClassifyError("Claude returned no documents")
+        first, *rest = sorted(batch.documents, key=lambda d: d.first_page)
+        out.append((base, first.filing))
+        out += [(base + d.first_page - 1, d.filing) for d in rest
+                if 1 < d.first_page <= len(chunk)]
+    return out

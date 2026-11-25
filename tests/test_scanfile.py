@@ -56,3 +56,33 @@ def test_pdf_metadata_tolerates_missing_fields():
 
 def test_unfiled_name():
     assert unfiled_name(datetime(2026, 11, 24, 9, 5, 7)) == "Scan 2026-11-24 090507.pdf"
+
+
+def test_segment_orders_dedupes_and_drops_out_of_range():
+    from brscan.scanfile import segment
+    assert segment(5, [(3, "b"), (0, "a"), (3, "c"), (9, "d")]) == [
+        (range(0, 3), "a"), (range(3, 5), "b")]
+    assert segment(4, [(2, "b")]) == [(range(0, 4), "b")]
+    assert segment(3, []) == []
+
+
+def test_segment_snaps_to_sheet_starts():
+    from brscan.scanfile import segment
+    assert segment(5, [(0, "a"), (3, "b")], sheet_starts=[0, 2, 4]) == [
+        (range(0, 2), "a"), (range(2, 5), "b")]
+    assert segment(4, [(0, "a"), (1, "b")], sheet_starts=[0, 2]) == [(range(0, 4), "a")]
+
+
+def test_plan_batch_plans_each_document_and_falls_back_to_unfiled(tmp_path):
+    from brscan.scanfile import UNFILED, plan_batch
+    pages = [tmp_path / f"p{i}.jpg" for i in range(3)]
+    other = filing()
+    other.folder, other.filename = "bills", "PSE bill"
+    docs = plan_batch(lambda pg, fo, **kw: [(0, filing()), (1, other)], pages, [])
+    assert [(len(p), plan.folder, plan.name) for p, plan in docs] == [
+        (1, "Receipts", "Safeway receipt 2026-11-20.pdf"), (2, "Bills", "PSE bill 2026-11-20.pdf")]
+
+    def boom(*a, **kw):
+        raise RuntimeError("API down")
+    (only_pages, plan), = plan_batch(boom, pages, [])
+    assert only_pages == pages and plan.folder == UNFILED and plan.error == "API down"

@@ -37,6 +37,34 @@ def crop(path: Path) -> None:
         pass
 
 
+# A page with less ink than this fraction of its area is treated as blank.
+BLANK_INK = 0.0005
+# How much darker than the paper a pixel must be to count as ink; ignores bleed-through.
+_INK_DELTA = 64
+
+
+def ink_ratio(path: Path) -> float:
+    """Fraction of the page (margins excluded) clearly darker than the paper."""
+    from PIL import Image, ImageFilter
+
+    with Image.open(path) as im:
+        g = im.convert("L")
+    g = g.reduce(2) if min(g.size) > 600 else g
+    w, h = g.size
+    mx, my = w // 20, h // 20
+    g = g.crop((mx, my, w - mx, h - my)).filter(ImageFilter.MedianFilter(3))
+    hist = g.histogram()
+    total = sum(hist)
+    seen, paper = 0, 255
+    for level, count in enumerate(hist):
+        seen += count
+        if seen * 2 >= total:
+            paper = level
+            break
+    cutoff = max(0, paper - _INK_DELTA)
+    return sum(hist[:cutoff]) / total if total else 0.0
+
+
 def assemble_pdf(out_path: Path, pages: List[Path], metadata: dict = None) -> None:
     import img2pdf
 

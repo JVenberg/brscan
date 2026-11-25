@@ -204,15 +204,22 @@ Google Drive, filed by Claude, with a phone notification.
 
 - It polls the scanner's eSCL status every few seconds and starts a scan as soon as
   the feeder reports a sheet (`AdfState` = `ScannerAdfLoaded`).
-- Sheets fed within 45 s of each other become one document (`SCANFILE_IDLE_SECS`).
+- Sheets fed within 45 s of each other form one batch (`SCANFILE_IDLE_SECS`), so you
+  can feed a whole pile without waiting. Claude splits the batch into separate
+  documents (both sides of a sheet always stay together) and files each one.
+- With duplex on (`BRSCAN_DUPLEX=1`, the compose default), blank pages such as empty
+  backs are dropped (`SCANFILE_KEEP_BLANK=1` keeps them). The scanner's own blank
+  page detection is requested too; this is the backstop. Each page's ink coverage
+  is logged so the threshold can be checked.
 - A jam sends a notification and holds the document open for 5 minutes so you can
   re-feed the sheet (`SCANFILE_JAM_SECS`).
-- The PDF is classified like `scanfile` and uploaded with rclone under
-  `SCANFILE_DRIVE_REMOTE`, e.g. `scans:Scans`. A failed classification goes to
-  `Unfiled/`; a failed upload is kept under `/data/pending` and retried.
-- Notifications are POSTed as `{title, message, url}` to `SCANFILE_NOTIFY_URL`, for
-  example a Home Assistant webhook (`deploy/ha-automation.yaml`). The URL opens the
-  file in Drive.
+- Each PDF is uploaded with rclone under `SCANFILE_DRIVE_REMOTE`, e.g.
+  `scans:Scans`. A failed classification puts the whole batch in `Unfiled/`; a
+  failed upload is kept under `/data/pending` and retried.
+- One notification per batch is POSTed as `{title, message, url}` to
+  `SCANFILE_NOTIFY_URL`, for example a Home Assistant webhook
+  (`deploy/ha-automation.yaml`). The URL opens the file in Drive, or the `Scans`
+  folder when the batch held several documents.
 
 ### Deploy with Docker Compose
 

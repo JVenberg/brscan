@@ -71,3 +71,39 @@ def test_unusable_responses_raise(monkeypatch, page, stop_reason, text):
     fake_api(monkeypatch, stop_reason=stop_reason, text=text)
     with pytest.raises(classify_mod.ClassifyError):
         classify_mod.classify([page], [], api_key="sk-test")
+
+
+def batch_json(*firsts):
+    return json.dumps({"documents": [{"first_page": f, "filing": FILING} for f in firsts]})
+
+
+def test_split_labels_pages_and_returns_zero_based_starts(monkeypatch, page):
+    seen = fake_api(monkeypatch, text=batch_json(2, 1, 9))
+    pages = [page, page, page]
+    labels = ["sheet 1, front", "sheet 1, back", "sheet 2, front"]
+    result = classify_mod.split(pages, ["Receipts"], api_key="sk-test", labels=labels)
+
+    assert [start for start, _ in result] == [0, 1]
+    assert result[0][1].folder == "Receipts"
+    content = seen["body"]["messages"][0]["content"]
+    assert content[1] == {"type": "text", "text": "Page 1 (sheet 1, front)"}
+    assert content[2]["type"] == "image"
+    assert content[5] == {"type": "text", "text": "Page 3 (sheet 2, front)"}
+
+
+def test_split_chunks_large_batches(monkeypatch, page):
+    calls = []
+    seen = fake_api(monkeypatch, text=batch_json(1, 2))
+    real = classify_mod._ask
+    monkeypatch.setattr(classify_mod, "_ask", lambda *a: calls.append(1) or real(*a))
+    monkeypatch.setattr(classify_mod, "SPLIT_CHUNK", 2)
+    result = classify_mod.split([page, page, page], [], api_key="sk-test")
+    assert len(calls) == 2
+    assert [start for start, _ in result] == [0, 1, 2]
+    assert seen["body"]["output_config"]["format"]["type"] == "json_schema"
+
+
+def test_split_with_no_documents_raises(monkeypatch, page):
+    fake_api(monkeypatch, text=json.dumps({"documents": []}))
+    with pytest.raises(classify_mod.ClassifyError):
+        classify_mod.split([page], [], api_key="sk-test")
