@@ -207,6 +207,8 @@ Google Drive, filed by Claude, with a phone notification.
 - Sheets fed within 45 s of each other form one batch (`SCANFILE_IDLE_SECS`), so you
   can feed a whole pile without waiting. Claude splits the batch into separate
   documents (both sides of a sheet always stay together) and files each one.
+- In the same call Claude flags pages that are sideways or upside down, and they are
+  turned upright before the PDF is built.
 - With duplex on (`BRSCAN_DUPLEX=1`, the compose default), blank pages such as empty
   backs are dropped (`SCANFILE_KEEP_BLANK=1` keeps them). The scanner's own blank
   page detection is requested too; this is the backstop. Each page's ink coverage

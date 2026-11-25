@@ -73,18 +73,23 @@ def test_unusable_responses_raise(monkeypatch, page, stop_reason, text):
         classify_mod.classify([page], [], api_key="sk-test")
 
 
-def batch_json(*firsts):
-    return json.dumps({"documents": [{"first_page": f, "filing": FILING} for f in firsts]})
+def batch_json(*firsts, rotated=()):
+    return json.dumps({
+        "documents": [{"first_page": f, "filing": FILING} for f in firsts],
+        "rotated": [{"page": p, "top_edge": edge} for p, edge in rotated],
+    })
 
 
 def test_split_labels_pages_and_returns_zero_based_starts(monkeypatch, page):
-    seen = fake_api(monkeypatch, text=batch_json(2, 1, 9))
+    seen = fake_api(monkeypatch, text=batch_json(
+        2, 1, 9, rotated=[(1, "bottom"), (3, "left"), (9, "right")]))
     pages = [page, page, page]
     labels = ["sheet 1, front", "sheet 1, back", "sheet 2, front"]
     result = classify_mod.split(pages, ["Receipts"], api_key="sk-test", labels=labels)
 
-    assert [start for start, _ in result] == [0, 1]
-    assert result[0][1].folder == "Receipts"
+    assert [start for start, _ in result.documents] == [0, 1]
+    assert result.documents[0][1].folder == "Receipts"
+    assert result.turns == {0: 180, 2: 90}
     content = seen["body"]["messages"][0]["content"]
     assert content[1] == {"type": "text", "text": "Page 1 (sheet 1, front)"}
     assert content[2]["type"] == "image"
@@ -93,17 +98,20 @@ def test_split_labels_pages_and_returns_zero_based_starts(monkeypatch, page):
 
 def test_split_chunks_large_batches(monkeypatch, page):
     calls = []
-    seen = fake_api(monkeypatch, text=batch_json(1, 2))
+    seen = fake_api(monkeypatch, text=batch_json(1, 2, rotated=[(2, "right")]))
     real = classify_mod._ask
     monkeypatch.setattr(classify_mod, "_ask", lambda *a: calls.append(1) or real(*a))
     monkeypatch.setattr(classify_mod, "SPLIT_CHUNK", 2)
     result = classify_mod.split([page, page, page], [], api_key="sk-test")
     assert len(calls) == 2
-    assert [start for start, _ in result] == [0, 1, 2]
-    assert seen["body"]["output_config"]["format"]["type"] == "json_schema"
+    assert [start for start, _ in result.documents] == [0, 1, 2]
+    # the second chunk has one page, so its "page 2" is dropped
+    assert result.turns == {1: 270}
+    schema = seen["body"]["output_config"]["format"]["schema"]
+    assert "rotated" in schema["required"]
 
 
 def test_split_with_no_documents_raises(monkeypatch, page):
-    fake_api(monkeypatch, text=json.dumps({"documents": []}))
+    fake_api(monkeypatch, text=batch_json())
     with pytest.raises(classify_mod.ClassifyError):
         classify_mod.split([page], [], api_key="sk-test")

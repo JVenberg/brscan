@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import io
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Literal, NamedTuple, Optional, Tuple
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -91,10 +91,30 @@ class Document(BaseModel):
     filing: Filing
 
 
+class Rotated(BaseModel):
+    page: int = Field(description="Number of the page (as labeled).")
+    top_edge: Literal["right", "bottom", "left"] = Field(
+        description="Edge of the image, as shown, where the top of the page's text is."
+    )
+
+
 class Batch(BaseModel):
     documents: List[Document] = Field(
         description="Every document in the batch, in page order. The first starts at page 1."
     )
+    rotated: List[Rotated] = Field(
+        description="Every page whose text is sideways or upside down as shown. "
+        "Leave out pages that already read upright."
+    )
+
+
+# Clockwise turn that makes a page upright, by where its top edge is.
+TURNS = {"right": 270, "bottom": 180, "left": 90}
+
+
+class Split(NamedTuple):
+    documents: List[Tuple[int, Filing]]
+    turns: Dict[int, int]  # page index -> clockwise degrees
 
 
 FILING_RULES = (
@@ -173,14 +193,15 @@ def split(pages: List[Path], known_folders: List[str],
           model: str = DEFAULT_MODEL,
           api_key: Optional[str] = None,
           effort: str = DEFAULT_EFFORT,
-          labels: Optional[List[str]] = None) -> List[Tuple[int, Filing]]:
-    """Split a batch of pages into documents and file each one.
+          labels: Optional[List[str]] = None) -> Split:
+    """Split a batch of pages into documents, file each one, and find rotated pages.
 
-    Returns (first page index, filing) pairs, 0-based, in page order. labels
-    name each page for Claude (e.g. "sheet 2, back"); a new chunk always starts
-    a new document.
+    Returns (first page index, filing) pairs, 0-based, in page order, plus the
+    clockwise turn each rotated page needs. labels name each page for Claude
+    (e.g. "sheet 2, back"); a new chunk always starts a new document.
     """
     out: List[Tuple[int, Filing]] = []
+    turns: Dict[int, int] = {}
     for base in range(0, len(pages), SPLIT_CHUNK):
         chunk = pages[base:base + SPLIT_CHUNK]
         edge = _split_edge(len(chunk))
@@ -195,7 +216,8 @@ def split(pages: List[Path], known_folders: List[str],
                 "run of consecutive pages, and file each one. Pages of one document "
                 "share a sender, layout, or page numbering (\"Page 2 of 3\"), or "
                 "continue the previous page. Both sides of a sheet belong to the same "
-                f"document. {FILING_RULES}"
+                f"document. {FILING_RULES} Also list every page that is sideways or "
+                "upside down as shown, so it can be turned upright."
             ),
         }]
         for i, p in enumerate(chunk, start=1):
@@ -209,4 +231,6 @@ def split(pages: List[Path], known_folders: List[str],
         out.append((base, first.filing))
         out += [(base + d.first_page - 1, d.filing) for d in rest
                 if 1 < d.first_page <= len(chunk)]
-    return out
+        turns.update({base + r.page - 1: TURNS[r.top_edge] for r in batch.rotated
+                      if 1 <= r.page <= len(chunk)})
+    return Split(out, turns)

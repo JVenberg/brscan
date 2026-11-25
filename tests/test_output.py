@@ -50,3 +50,23 @@ def test_pages_with_content(tmp_path, draw):
 
 def test_blank_colored_paper(tmp_path):
     assert ink_ratio(page(tmp_path, "p", paper=(120, 160, 220))) < BLANK_INK
+
+
+@pytest.mark.parametrize("clockwise,size,corner", [
+    (90, (200, 300), (190, 10)),
+    (180, (300, 200), (290, 190)),
+    (270, (200, 300), (10, 290)),
+])
+def test_rotate_turns_clockwise(tmp_path, clockwise, size, corner):
+    from PIL import Image
+
+    from brscan.output import rotate
+    im = Image.new("RGB", (300, 200), "white")
+    im.paste((0, 0, 0), (0, 0, 50, 50))
+    path = tmp_path / "p.jpg"
+    im.save(path, "JPEG", dpi=(300, 150))
+    rotate(path, clockwise)
+    with Image.open(path) as out:
+        assert out.size == size
+        assert out.convert("L").getpixel(corner) < 64
+        assert round(out.info["dpi"][0]) == (300 if clockwise == 180 else 150)

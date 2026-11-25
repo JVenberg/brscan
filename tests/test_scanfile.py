@@ -78,11 +78,14 @@ def test_plan_batch_plans_each_document_and_falls_back_to_unfiled(tmp_path):
     pages = [tmp_path / f"p{i}.jpg" for i in range(3)]
     other = filing()
     other.folder, other.filename = "bills", "PSE bill"
-    docs = plan_batch(lambda pg, fo, **kw: [(0, filing()), (1, other)], pages, [])
+    docs, turns = plan_batch(lambda pg, fo, **kw: ([(0, filing()), (1, other)], {1: 180, 7: 90}),
+                             pages, [])
     assert [(len(p), plan.folder, plan.name) for p, plan in docs] == [
         (1, "Receipts", "Safeway receipt 2026-11-20.pdf"), (2, "Bills", "PSE bill 2026-11-20.pdf")]
+    assert turns == {1: 180}
 
     def boom(*a, **kw):
         raise RuntimeError("API down")
-    (only_pages, plan), = plan_batch(boom, pages, [])
+    [(only_pages, plan)], turns = plan_batch(boom, pages, [])
     assert only_pages == pages and plan.folder == UNFILED and plan.error == "API down"
+    assert turns == {}

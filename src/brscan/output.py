@@ -65,6 +65,18 @@ def ink_ratio(path: Path) -> float:
     return sum(hist[:cutoff]) / total if total else 0.0
 
 
+def rotate(path: Path, clockwise: int) -> None:
+    """Turn a page image in place by 90, 180, or 270 degrees clockwise."""
+    from PIL import Image
+
+    transpose = {90: Image.Transpose.ROTATE_270, 180: Image.Transpose.ROTATE_180,
+                 270: Image.Transpose.ROTATE_90}[clockwise]
+    with Image.open(path) as im:
+        dpi = im.info.get("dpi", (300, 300))
+        out = im.transpose(transpose)
+    out.save(path, "JPEG", quality=92, dpi=dpi if clockwise == 180 else dpi[::-1])
+
+
 def assemble_pdf(out_path: Path, pages: List[Path], metadata: dict = None) -> None:
     import img2pdf
 

@@ -2,9 +2,10 @@
 
 Polls the scanner's eSCL status. When a sheet is inserted it scans it, groups
 sheets fed within a short window into a batch, drops blank pages, has Claude split
-the batch into documents and file each one, uploads the PDFs to Google Drive
-through rclone, and sends a phone notification through a Home Assistant webhook. Built to run as a container on an
-always-on host; see deploy/ in the repository.
+the batch into documents, file each one, and flag rotated pages (turned upright),
+uploads the PDFs to Google Drive through rclone, and sends a phone notification
+through a Home Assistant webhook. Built to run as a container on an always-on
+host; see deploy/ in the repository.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from . import discovery
 from .cli import scan_one_job
 from .escl import (COLOR_MODES, ESCL_NS, PWG_NS, Fatal, Jam, Recoverable, Scanner,
                    ScanSettings, Unreachable)
-from .output import BLANK_INK, assemble_pdf, crop, ink_ratio
+from .output import BLANK_INK, assemble_pdf, crop, ink_ratio, rotate
 from .scanfile import DEFAULT_EFFORT, DEFAULT_MODEL, EFFORTS, plan_batch, unique_path
 
 LOADED = "ScannerAdfLoaded"
@@ -264,8 +265,15 @@ class Watcher:
             log(f"could not list Drive folders: {exc}")
             folders = []
         log(f"classifying {len(kept)} page(s) with {a.model}...")
-        docs = plan_batch(self.split_fn, kept, folders, sheet_starts=firsts, labels=labels,
-                          model=a.model, api_key=a.api_key, effort=a.effort)
+        docs, turns = plan_batch(self.split_fn, kept, folders, sheet_starts=firsts,
+                                 labels=labels, model=a.model, api_key=a.api_key,
+                                 effort=a.effort)
+        for j, degrees in sorted(turns.items()):
+            try:
+                rotate(kept[j], degrees)
+                log(f"page {keep[j] + 1}: turned {degrees} degrees clockwise")
+            except Exception as exc:
+                log(f"page {keep[j] + 1}: rotation failed ({exc}); leaving it as scanned")
         results = [self.file_one(batch / f"doc-{n:03d}.pdf", doc_pages, plan)
                    for n, (doc_pages, plan) in enumerate(docs, start=1)]
         self.report(results, len(pages) - len(kept))

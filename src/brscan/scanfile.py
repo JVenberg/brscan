@@ -149,25 +149,27 @@ def segment(n: int, starts: List[Tuple[int, object]],
 
 def plan_batch(split_fn, pages: List[Path], folders: List[str],
                sheet_starts: Optional[List[int]] = None,
-               **split_kw) -> List[Tuple[List[Path], Plan]]:
+               **split_kw) -> Tuple[List[Tuple[List[Path], Plan]], dict]:
     """Split the pages into documents and plan each one.
 
-    Never raises for a classification failure: all pages become one Unfiled/ document.
+    Returns the documents and the clockwise turn each rotated page needs. Never
+    raises for a classification failure: all pages become one Unfiled/ document.
     """
     try:
-        runs = segment(len(pages), split_fn(pages, folders, **split_kw), sheet_starts)
+        documents, turns = split_fn(pages, folders, **split_kw)
+        runs = segment(len(pages), documents, sheet_starts)
         if not runs:
             raise ValueError("no documents found")
     except Exception as exc:
         plan = Plan(UNFILED, unfiled_name(), {"creator": CREATOR},
                     error=str(exc) or type(exc).__name__)
-        return [(list(pages), plan)]
+        return [(list(pages), plan)], {}
     out = []
     for run, filing in runs:
         folder = sanitize_folder(filing.folder)
         plan = Plan(folder, build_name(filing), pdf_metadata(filing, folder), filing)
         out.append(([pages[i] for i in run], plan))
-    return out
+    return out, {i: d for i, d in turns.items() if 0 <= i < len(pages)}
 
 
 def unique_path(path: Path) -> Path:

@@ -62,7 +62,7 @@ def make_watcher(tmp_path, monkeypatch):
         draw.rectangle((100, y, 700, y + 12), fill="black")
     im.save(text, "JPEG")
 
-    def factory(script, split=lambda pages, folders, **kw: [(0, filing())], drive=None,
+    def factory(script, split=lambda pages, folders, **kw: ([(0, filing())], {}), drive=None,
                 extra=()):
         """script: per-sheet outcomes fed in order: an exception, or sides like 'ok+blank'."""
         outcomes = list(script)
@@ -146,7 +146,7 @@ def test_batch_is_split_into_documents_with_one_notification(make_watcher):
     drive = FakeDrive()
     w, notes = make_watcher(
         ["ok", "ok", "ok"], drive=drive,
-        split=lambda pages, folders, **kw: [(0, filing()), (2, filing("Bills", "PSE bill"))])
+        split=lambda pages, folders, **kw: ([(0, filing()), (2, filing("Bills", "PSE bill"))], {}))
     w.collect_document()
     assert sorted(drive.files) == [("Bills", "PSE bill 2026-11-20.pdf"),
                                    ("Receipts", "Safeway receipt 2026-11-20.pdf")]
@@ -162,7 +162,7 @@ def test_duplex_drops_blank_backs_and_keeps_sheets_together(make_watcher):
     def split(pages, folders, **kw):
         seen["pages"], seen["labels"] = len(pages), kw["labels"]
         # a start on the back of sheet 2 moves to that sheet's front
-        return [(0, filing()), (2, filing("Bills", "PSE bill"))]
+        return [(0, filing()), (2, filing("Bills", "PSE bill"))], {}
 
     w, notes = make_watcher(["ok+blank", "ok+ok"], split=split, extra=["-d"])
     w.collect_document()
@@ -171,6 +171,28 @@ def test_duplex_drops_blank_backs_and_keeps_sheets_together(make_watcher):
     assert notes[0][1] == ("Receipts/Safeway receipt 2026-11-20.pdf (1 page)\n"
                            "Bills/PSE bill 2026-11-20.pdf (2 pages)\n"
                            "1 blank page removed.")
+
+
+def test_rotated_pages_are_turned_before_filing(make_watcher, monkeypatch):
+    turned = []
+    monkeypatch.setattr(watch, "rotate", lambda path, deg: turned.append((path.name, deg)))
+    w, notes = make_watcher(["ok+blank", "ok+ok"], extra=["-d"],
+                            split=lambda pages, folders, **kw: ([(0, filing())], {1: 180, 2: 90}))
+    w.collect_document()
+    # indexes are into the kept pages; page-002 was a dropped blank
+    assert turned == [("page-003.jpg", 180), ("page-004.jpg", 90)]
+    assert notes[0][0] == "Scan filed"
+
+
+def test_rotation_failure_still_files(make_watcher, monkeypatch):
+    def broken(path, deg):
+        raise OSError("disk full")
+    monkeypatch.setattr(watch, "rotate", broken)
+    drive = FakeDrive()
+    w, notes = make_watcher(["ok"], drive=drive,
+                            split=lambda pages, folders, **kw: ([(0, filing())], {0: 180}))
+    w.collect_document()
+    assert list(drive.files) == [("Receipts", "Safeway receipt 2026-11-20.pdf")]
 
 
 def test_blank_note_on_single_document(make_watcher):
